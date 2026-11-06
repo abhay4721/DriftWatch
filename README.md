@@ -16,7 +16,7 @@ flowchart LR
   Grafana[Grafana] --> Prometheus
 ```
 
-Compose keeps PostgreSQL on a private internal network. The API joins that network and the application network; browser-facing ports bind to localhost. Worker and scheduler are separate processes. The OpenTofu adapter runs only from the backend code path with argument arrays, timeouts, source-root validation, and refresh-only plans. Phase 3 adds PostgreSQL persistence, Alembic migrations, and versioned project, source, policy, inventory, scan-history, finding, and audit APIs. Scan execution remains assigned to the later worker phase.
+Compose keeps PostgreSQL on a private internal network. The API joins that network and the application network; browser-facing ports bind to localhost. Worker and scheduler are separate processes. The OpenTofu adapter runs only from the backend code path with argument arrays, timeouts, source-root validation, and refresh-only plans. Phase 3 adds PostgreSQL persistence, Alembic migrations, and versioned project, source, policy, inventory, scan-history, finding, and audit APIs. Phase 4 adds a responsive React dashboard that reads those APIs, summarizes recorded data, supports workspace search, and creates projects. Scan execution remains assigned to the later worker phase, so empty scan and finding views are expected until scans are persisted.
 
 ## Stack
 
@@ -37,7 +37,7 @@ Prerequisites: Docker Desktop or Docker Engine with the Compose plugin, PowerShe
 
 Open:
 
-- Dashboard shell: http://localhost:5173
+- Dashboard: http://localhost:5173
 - API OpenAPI: http://localhost:8000/docs
 - API readiness: http://localhost:8000/health/ready
 - Prometheus: http://localhost:9090
@@ -55,7 +55,7 @@ python -m venv .venv
 .\scripts\demo.ps1 -Python (Resolve-Path '.venv\Scripts\python.exe').Path -Tofu tofu
 ```
 
-The demo creates the baseline file with one explicit `tofu apply`, runs a clean scan, edits the file out of band, reports the changed `content` attribute, restores the approved value, and confirms a clean scan. Detection itself runs no `apply`, does not update state, and returns sanitized JSON. Run an individual scan with `python -m driftwatch.scan_cli --source tofu-local` from the repository root. Exit codes are `0` for clean, `2` for drift, and `1` for scan errors. The Phase 2 CLI remains standalone; persisted scan execution is wired in the automation phase. The UI shell does not display scan results until Phase 4.
+The demo creates the baseline file with one explicit `tofu apply`, runs a clean scan, edits the file out of band, reports the changed `content` attribute, restores the approved value, and confirms a clean scan. Detection itself runs no `apply`, does not update state, and returns sanitized JSON. Run an individual scan with `python -m driftwatch.scan_cli --source tofu-local` from the repository root. Exit codes are `0` for clean, `2` for drift, and `1` for scan errors. The Phase 2 CLI remains standalone; persisted scan execution is wired in the automation phase. The Phase 4 dashboard displays persisted projects, environments, sources, resources, findings, scans, and audit events when available.
 
 The OpenTofu integration and parser are described in [Drift detection](docs/drift-detection.md). Phase 3 endpoints and migrations are described in [Database and API](docs/api.md).
 
@@ -111,8 +111,8 @@ Run the full Phase 2 clean → drift → clean demo with `-RunDriftDemo`. This i
 
 1. Foundation and Docker Compose
 2. OpenTofu drift detection engine and offline local demonstration
-3. Database schema, migrations, and versioned API (current)
-4. React dashboard
+3. Database schema, migrations, and versioned API
+4. React dashboard (current)
 5. Worker and scheduler automation
 6. GitHub integration
 7. Optional Kubernetes adapter
