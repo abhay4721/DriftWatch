@@ -43,7 +43,7 @@ Open:
 - Prometheus: http://localhost:9090
 - Grafana: http://localhost:3000 (credentials from `.env`)
 
-To stop containers while keeping local data, run `.scripts\cleanup.ps1`. To also delete PostgreSQL and observability data, run `.scripts\cleanup.ps1 -RemoveData`.
+To stop containers while keeping local data, run `.\scripts\cleanup.ps1`. To also delete PostgreSQL and observability data, run `.\scripts\cleanup.ps1 -RemoveData`.
 
 ## Phase 2 local drift demo
 
@@ -82,6 +82,28 @@ Frontend checks, after installing frontend dependencies with `npm install` from 
 ```powershell
 npm run lint
 npm run build
+```
+
+## Automated verification and diagnostics
+
+Run the Phase 1 and 2 checks with one command. The script runs backend tests/lint, frontend lint/build when dependencies are installed, validates Compose configuration, and checks service health when the stack is running. It prints a suggested fix for failures and exits nonzero if any check fails.
+
+```powershell
+.\scripts\verify.ps1
+```
+
+Select one phase, start the Compose stack as part of verification, or save a JSON report. `-StartServices` reuses existing images; add `-BuildServices` only when you want Docker to rebuild them:
+
+```powershell
+.\scripts\verify.ps1 -Phase 1 -StartServices -ReportPath reports/phase1.json
+.\scripts\verify.ps1 -Phase 1 -StartServices -BuildServices
+.\scripts\verify.ps1 -Phase 2
+```
+
+Run the full Phase 2 clean → drift → clean demo with `-RunDriftDemo`. This initializes and applies the demo's local baseline; each scan verifies that it leaves the OpenTofu state file unchanged.
+
+```powershell
+.\scripts\verify.ps1 -Phase 2 -RunDriftDemo -Python .\.venv\Scripts\python.exe -Tofu tofu
 ```
 
 ## Roadmap
