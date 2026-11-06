@@ -19,6 +19,7 @@ from driftwatch.db_models import (
     ResourceChange,
     Scan,
 )
+from driftwatch.scan_service import enqueue_scan
 from driftwatch.schemas import (
     AuditLogOut,
     EnvironmentCreate,
@@ -212,6 +213,34 @@ def list_sources(
 @router.get("/sources/{source_id}", response_model=SourceOut)
 def get_source(source_id: uuid.UUID, db: Session = Depends(get_db)) -> InfrastructureSource:
     return _get_or_404(db, InfrastructureSource, source_id, "Infrastructure source")
+
+
+@router.post(
+    "/sources/{source_id}/scans",
+    response_model=ScanOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def request_source_scan(source_id: uuid.UUID, db: Session = Depends(get_db)) -> Scan:
+    """Queue a manual scan; the worker runs the provider adapter asynchronously."""
+    source = _get_or_404(db, InfrastructureSource, source_id, "Infrastructure source")
+    if not source.enabled:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "source_disabled", "message": "Enable this source before scanning."},
+        )
+    if source.provider != "opentofu":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "unsupported_provider",
+                "message": "Only OpenTofu sources can be scanned in this phase.",
+            },
+        )
+    scan = enqueue_scan(db, source, "manual")
+    _record_audit(db, "scan.queued", "scan", scan.id, {"source_id": str(source.id)})
+    _commit(db)
+    db.refresh(scan)
+    return scan
 
 
 @router.get("/sources/{source_id}/resources", response_model=Page[ResourceOut])

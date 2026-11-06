@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('All', '1', '2', '3')]
+    [ValidateSet('All', '1', '2', '3', '4', '5')]
     [string]$Phase = 'All',
     [switch]$StartServices,
     [switch]$BuildServices,
@@ -81,9 +81,10 @@ function Test-HttpEndpoint([string]$Name, [string]$Url, [string]$ExpectedPropert
 Write-Host "DriftWatch verification | Phase: $Phase" -ForegroundColor Cyan
 Write-Host "Repository: $repoRoot`n"
 
-$runPhase1 = $Phase -in @('All', '1')
+$runPhase1 = $Phase -in @('All', '1', '4')
 $runPhase2 = $Phase -in @('All', '2')
 $runPhase3 = $Phase -in @('All', '3')
+$runPhase5 = $Phase -in @('All', '5')
 
 if ($runPhase1) {
     Write-Host '--- Phase 1: foundation and runtime ---' -ForegroundColor Cyan
@@ -158,6 +159,13 @@ if ($runPhase3) {
     Write-Host "`n--- Phase 3: database and API ---" -ForegroundColor Cyan
     Invoke-CommandCheck 'Versioned API tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', '.pytest-tmp', 'backend/tests/test_api_v1.py') $repoRoot 'Review the failure details; install backend requirements if modules are missing.'
     Invoke-CommandCheck 'Phase 3 lint' $Python @('-m', 'ruff', 'check', 'backend/src/driftwatch/database.py', 'backend/src/driftwatch/db_models.py', 'backend/src/driftwatch/schemas.py', 'backend/src/driftwatch/api_v1.py', 'backend/migrations', 'backend/tests/test_api_v1.py') $repoRoot 'Fix the reported lint issues.'
+}
+
+if ($runPhase5) {
+    Write-Host "`n--- Phase 5: scan automation ---" -ForegroundColor Cyan
+    Invoke-CommandCheck 'Automation tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', '.pytest-tmp', 'backend/tests/test_automation.py', 'backend/tests/test_api_v1.py') $repoRoot 'Review the failure details; install backend requirements if modules are missing.'
+    Invoke-CommandCheck 'Phase 5 lint' $Python @('-m', 'ruff', 'check', 'backend/src/driftwatch/config.py', 'backend/src/driftwatch/scan_service.py', 'backend/src/driftwatch/worker.py', 'backend/src/driftwatch/scheduler.py', 'backend/src/driftwatch/api_v1.py', 'backend/tests/test_automation.py', 'backend/tests/test_api_v1.py') $repoRoot 'Fix the reported Ruff findings.'
+    Invoke-CommandCheck 'Compose configuration' 'docker' @('compose', 'config', '--quiet') $repoRoot 'Check docker-compose.yml and required .env values.'
 }
 
 $failed = @($checks | Where-Object status -eq 'FAIL').Count

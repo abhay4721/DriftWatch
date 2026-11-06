@@ -18,6 +18,7 @@ class DriftEngine:
         report.resource_count = getattr(
             self.adapter, "resource_count", len({finding.resource_address for finding in findings})
         )
+        report.resources = getattr(self.adapter, "resources", [])
         report.status = "drift" if findings else "clean"
         report.completed_at = datetime.now(UTC)
         return report

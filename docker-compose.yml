@@ -52,9 +52,14 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://driftwatch:change-this-local-password@postgres:5432/driftwatch}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DRIFTWATCH_SOURCE_ROOT: /sources
+      DRIFTWATCH_SCAN_TIMEOUT_SECONDS: ${DRIFTWATCH_SCAN_TIMEOUT_SECONDS:-300}
+      DRIFTWATCH_WORKER_POLL_SECONDS: ${DRIFTWATCH_WORKER_POLL_SECONDS:-3}
     depends_on:
-      postgres:
+      backend:
         condition: service_healthy
+    volumes:
+      - ./demo:/sources
     networks: [application, data]
     restart: unless-stopped
 
@@ -66,8 +71,10 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://driftwatch:change-this-local-password@postgres:5432/driftwatch}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DRIFTWATCH_SCHEDULE_INTERVAL_SECONDS: ${DRIFTWATCH_SCHEDULE_INTERVAL_SECONDS:-3600}
+      DRIFTWATCH_SCHEDULER_POLL_SECONDS: ${DRIFTWATCH_SCHEDULER_POLL_SECONDS:-30}
     depends_on:
-      postgres:
+      backend:
         condition: service_healthy
     networks: [application, data]
     restart: unless-stopped

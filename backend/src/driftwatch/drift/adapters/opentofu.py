@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from driftwatch.drift.adapters.base import ProviderAdapter
-from driftwatch.drift.models import DriftFinding
+from driftwatch.drift.models import DriftFinding, ScannedResource
 from driftwatch.drift.normalize_plan import parse_plan
 from driftwatch.drift.policy import DriftPolicy
 
@@ -41,6 +41,7 @@ class OpenTofuAdapter(ProviderAdapter):
         self.tofu_path = tofu_path
         self.timeout_seconds = timeout_seconds
         self.resource_count = 0
+        self.resources: list[ScannedResource] = []
 
     def scan(self, source: Path) -> list[DriftFinding]:
         source = validate_source_path(source, self.source_root)
@@ -55,6 +56,10 @@ class OpenTofuAdapter(ProviderAdapter):
         state_result = self._run(["state", "list", "-no-color"], source)
         addresses = [line for line in state_result.stdout.splitlines() if line.strip()]
         self.resource_count = len(addresses)
+        self.resources = [
+            ScannedResource(address=address, resource_type=_resource_type(address))
+            for address in addresses
+        ]
         if not addresses:
             raise ScanError(
                 "missing_state",
@@ -211,3 +216,11 @@ def validate_source_path(source: Path, allowed_root: Path) -> Path:
             "invalid_source", "The source path must be a project directory below the source root."
         )
     return resolved
+
+
+def _resource_type(address: str) -> str:
+    """Extract the type segment from root or module-qualified state addresses."""
+    parts = address.split(".")
+    if len(parts) >= 3 and parts[-3] == "data":
+        return parts[-2]
+    return parts[-2] if len(parts) > 1 else "unknown"

@@ -23,6 +23,11 @@ class DriftFinding(BaseModel):
     recommended_action: str
 
 
+class ScannedResource(BaseModel):
+    address: str
+    resource_type: str
+
+
 class ScanReport(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -33,5 +38,6 @@ class ScanReport(BaseModel):
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     resource_count: int = 0
+    resources: list[ScannedResource] = Field(default_factory=list)
     findings: list[DriftFinding] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
