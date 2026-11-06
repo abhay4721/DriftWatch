@@ -12,6 +12,8 @@ COPY --from=tofu /usr/local/bin/tofu /usr/local/bin/tofu
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY pyproject.toml ./
+COPY alembic.ini ./
+COPY migrations ./migrations
 COPY src ./src
 RUN pip install --no-cache-dir --no-deps .
 RUN tofu version

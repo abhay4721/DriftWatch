@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('All', '1', '2')]
+    [ValidateSet('All', '1', '2', '3')]
     [string]$Phase = 'All',
     [switch]$StartServices,
     [switch]$BuildServices,
@@ -83,6 +83,7 @@ Write-Host "Repository: $repoRoot`n"
 
 $runPhase1 = $Phase -in @('All', '1')
 $runPhase2 = $Phase -in @('All', '2')
+$runPhase3 = $Phase -in @('All', '3')
 
 if ($runPhase1) {
     Write-Host '--- Phase 1: foundation and runtime ---' -ForegroundColor Cyan
@@ -151,6 +152,12 @@ if ($runPhase2) {
     } else {
         Add-Check 'Read-only scan demo' 'SKIP' 'Not requested; the demo runs tofu apply to establish its local baseline.' 'Run with -RunDriftDemo when you want the full clean → drift → clean scan demonstration.'
     }
+}
+
+if ($runPhase3) {
+    Write-Host "`n--- Phase 3: database and API ---" -ForegroundColor Cyan
+    Invoke-CommandCheck 'Versioned API tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', '.pytest-tmp', 'backend/tests/test_api_v1.py') $repoRoot 'Review the failure details; install backend requirements if modules are missing.'
+    Invoke-CommandCheck 'Phase 3 lint' $Python @('-m', 'ruff', 'check', 'backend/src/driftwatch/database.py', 'backend/src/driftwatch/db_models.py', 'backend/src/driftwatch/schemas.py', 'backend/src/driftwatch/api_v1.py', 'backend/migrations', 'backend/tests/test_api_v1.py') $repoRoot 'Fix the reported lint issues.'
 }
 
 $failed = @($checks | Where-Object status -eq 'FAIL').Count
