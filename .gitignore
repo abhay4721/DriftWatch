@@ -6,6 +6,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.tools/
+.npm-cache/
 venv/
 node_modules/
 frontend/dist/
@@ -17,5 +19,6 @@ coverage/
 *.tfplan
 *.plan
 .terraform/
+demo/tofu-local/generated/
 *.pem
 *.key

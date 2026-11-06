@@ -2,7 +2,7 @@
 
 DriftWatch is a local-first, cloud-agnostic platform for detecting infrastructure configuration drift. It is designed to run on a developer laptop and does not require cloud credentials.
 
-## Phase 1 architecture
+## Architecture
 
 ```mermaid
 flowchart LR
@@ -16,7 +16,7 @@ flowchart LR
   Grafana[Grafana] --> Prometheus
 ```
 
-Compose keeps PostgreSQL on a private internal network. The API joins that network and the application network; browser-facing ports bind to localhost. Worker and scheduler are separate processes. In this foundation phase they only provide controlled process entrypoints; scan execution and scheduled scan behavior are added in later phases.
+Compose keeps PostgreSQL on a private internal network. The API joins that network and the application network; browser-facing ports bind to localhost. Worker and scheduler are separate processes. The OpenTofu adapter runs only from the backend code path with argument arrays, timeouts, source-root validation, and refresh-only plans. The Phase 2 CLI exercises that engine; database persistence, API scan management, and scheduled execution are added in later phases.
 
 ## Stack
 
@@ -45,6 +45,20 @@ Open:
 
 To stop containers while keeping local data, run `.scripts\cleanup.ps1`. To also delete PostgreSQL and observability data, run `.scripts\cleanup.ps1 -RemoveData`.
 
+## Phase 2 local drift demo
+
+Prerequisites: OpenTofu 1.13 or compatible, Python 3.12+, and PowerShell. The first `tofu init` downloads the free `hashicorp/local` provider and writes a provider lock file; later scans can run without network access while the provider remains cached.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r backend/requirements-dev.txt
+.\scripts\demo.ps1 -Python (Resolve-Path '.venv\Scripts\python.exe').Path -Tofu tofu
+```
+
+The demo creates the baseline file with one explicit `tofu apply`, runs a clean scan, edits the file out of band, reports the changed `content` attribute, restores the approved value, and confirms a clean scan. Detection itself runs no `apply`, does not update state, and returns sanitized JSON. Run an individual scan with `python -m driftwatch.scan_cli --source tofu-local` from the repository root. Exit codes are `0` for clean, `2` for drift, and `1` for scan errors. Findings are not stored in PostgreSQL until Phase 3, and the UI shell does not display scan results until Phase 4.
+
+The OpenTofu integration and parser are described in [Drift detection](docs/drift-detection.md).
+
 ## Repository layout
 
 ```text
@@ -72,8 +86,8 @@ npm run build
 
 ## Roadmap
 
-1. Foundation and Docker Compose (current)
-2. OpenTofu drift detection engine and offline local demonstration
+1. Foundation and Docker Compose
+2. OpenTofu drift detection engine and offline local demonstration (current)
 3. Database schema, migrations, and versioned API
 4. React dashboard
 5. Worker and scheduler automation

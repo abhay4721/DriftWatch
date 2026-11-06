@@ -1,0 +1,25 @@
+version: 1
+default_severity: medium
+sensitive_severity: high
+default_recommended_action: "Review the change and reconcile it through the approved IaC workflow."
+resource_types:
+  local_file: low
+attribute_rules:
+  - pattern: "*.password*"
+    severity: critical
+    recommended_action: "Rotate the affected credential and review the authorized change history."
+  - pattern: "*.secret*"
+    severity: critical
+    recommended_action: "Rotate the affected secret and review the authorized change history."
+  - pattern: "content"
+    severity: medium
+    recommended_action: "Review the file content change and restore the approved value if it was unauthorized."
+ignore_attributes: []
+sensitive_attributes:
+  - "*.password*"
+  - "*.passwd*"
+  - "*.secret*"
+  - "*.token*"
+  - "*.private_key*"
+  - "*.access_key*"
+  - "*.credential*"
