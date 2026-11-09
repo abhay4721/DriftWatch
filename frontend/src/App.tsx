@@ -10,9 +10,10 @@ type Finding = { id: string; scan_id: string; source_id: string; resource_addres
 type AuditLog = { id: string; action: string; entity_type: string; entity_id: string; created_at: string; details: Record<string, unknown> }
 type AuthUser = { id: string; email: string; role: string; is_active: boolean }
 type NotificationItem = { id: string; finding_id: string | null; channel: string; status: string; payload: Record<string, unknown>; sent_at: string | null; created_at: string }
-type DashboardData = { projects: Project[]; environments: Environment[]; sources: Source[]; resources: Resource[]; scans: Scan[]; findings: Finding[]; audit: AuditLog[]; notifications: NotificationItem[]; unread_count: number }
+type Proposal = { id: string; finding_id: string; status: string; proposal: { title?: string; summary?: string; proposed_action?: string; review?: { note?: string | null; reviewed_at?: string } }; created_at: string }
+type DashboardData = { projects: Project[]; environments: Environment[]; sources: Source[]; resources: Resource[]; scans: Scan[]; findings: Finding[]; audit: AuditLog[]; notifications: NotificationItem[]; unread_count: number; proposals: Proposal[] }
 
-const emptyData: DashboardData = { projects: [], environments: [], sources: [], resources: [], scans: [], findings: [], audit: [], notifications: [], unread_count: 0 }
+const emptyData: DashboardData = { projects: [], environments: [], sources: [], resources: [], scans: [], findings: [], audit: [], notifications: [], unread_count: 0, proposals: [] }
 const navItems = [
   { id: 'overview', label: 'Overview', icon: '◫' },
   { id: 'projects', label: 'Projects', icon: '▦' },
@@ -22,6 +23,7 @@ const navItems = [
   { id: 'scans', label: 'Scan history', icon: '◷' },
   { id: 'audit', label: 'Audit log', icon: '≡' },
   { id: 'notifications', label: 'Notifications', icon: '●' },
+  { id: 'proposals', label: 'Remediation proposals', icon: '✓' },
 ] as const
 type Section = (typeof navItems)[number]['id']
 
@@ -56,13 +58,14 @@ async function loadDashboard(): Promise<DashboardData> {
   const environments = environmentPages.flatMap((page) => page.items)
   const sourcePages = await Promise.all(environments.map((environment) => api<Page<Source>>(`/environments/${environment.id}/sources?limit=100`)))
   const sources = sourcePages.flatMap((page) => page.items)
-  const [resourcePages, scanPages, findingPages, auditPage, notificationPage, unreadResult] = await Promise.all([
+  const [resourcePages, scanPages, findingPages, auditPage, notificationPage, unreadResult, proposalPage] = await Promise.all([
     Promise.all(sources.map((source) => api<Page<Resource>>(`/sources/${source.id}/resources?limit=100`))),
     Promise.all(sources.map((source) => api<Page<Scan>>(`/sources/${source.id}/scans?limit=100`))),
     Promise.all(sources.map((source) => api<Page<Finding>>(`/findings?source_id=${source.id}&limit=100`))),
     api<Page<AuditLog>>('/audit-logs?limit=100'),
     api<Page<NotificationItem>>('/notifications?limit=100'),
     api<{ count: number }>('/notifications/unread-count'),
+    api<Page<Proposal>>('/proposals?limit=100'),
   ])
   return {
     projects, environments, sources,
@@ -72,6 +75,7 @@ async function loadDashboard(): Promise<DashboardData> {
     audit: auditPage.items,
     notifications: notificationPage.items,
     unread_count: unreadResult.count,
+    proposals: proposalPage.items,
   }
 }
 
@@ -179,6 +183,7 @@ function App() {
       findings: data.findings.filter((item) => `${item.resource_address} ${item.severity} ${item.status}`.toLowerCase().includes(value) || sourceIds.has(item.source_id)),
       audit: data.audit.filter((item) => `${item.action} ${item.entity_type}`.toLowerCase().includes(value)),
       notifications: data.notifications.filter((item) => `${String(item.payload.title ?? '')} ${String(item.payload.message ?? '')} ${item.status}`.toLowerCase().includes(value)),
+      proposals: data.proposals.filter((item) => `${item.proposal.title ?? ''} ${item.proposal.summary ?? ''} ${item.proposal.proposed_action ?? ''} ${item.status}`.toLowerCase().includes(value)),
     }
   }, [data, query])
 
@@ -232,6 +237,7 @@ function App() {
             {section === 'scans' && <Scans data={filtered} />}
             {section === 'audit' && <Audit data={filtered} />}
             {section === 'notifications' && <Notifications data={filtered} onRead={markNotificationRead} onReadAll={markAllNotificationsRead} />}
+            {section === 'proposals' && <Proposals data={filtered} canReview={currentUser?.role === 'admin'} canCreate={currentUser?.role === 'admin' || currentUser?.role === 'operator'} onChanged={() => void refresh()} />}
           </>}
           <footer className="page-footer"><span>DriftWatch <b>·</b> Infrastructure drift detection</span><span>Data refreshes when you open this dashboard <b>·</b> <a href="/docs" target="_blank" rel="noreferrer">API documentation ↗</a></span></footer>
         </div>
@@ -307,6 +313,59 @@ function Notifications({ data, onRead, onReadAll }: { data: DashboardData; onRea
       {item.status === 'unread' && <button className="button button-quiet button-small" onClick={() => onRead(item.id)}>Mark read</button>}
     </article>)}</div> : <EmptyState icon="●" title="You’re all caught up" description="Drift detections, resolutions, and failed scans will appear here." />}
   </section>
+}
+
+function Proposals({ data, canReview, canCreate, onChanged }: { data: DashboardData; canReview: boolean; canCreate: boolean; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  async function createProposal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const formElement = event.currentTarget
+    const form = new FormData(formElement)
+    const findingId = String(form.get('finding_id') ?? '')
+    setBusy(true)
+    setError('')
+    try {
+      await api<Proposal>(`/findings/${findingId}/proposals`, {
+        method: 'POST',
+        body: JSON.stringify({ title: form.get('title'), summary: form.get('summary'), proposed_action: form.get('proposed_action') }),
+      })
+      formElement.reset()
+      onChanged()
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not submit proposal.') }
+    finally { setBusy(false) }
+  }
+  async function review(id: string, decision: 'approved' | 'rejected') {
+    setBusy(true)
+    setError('')
+    try {
+      await api<Proposal>(`/proposals/${id}/review`, { method: 'POST', body: JSON.stringify({ decision }) })
+      onChanged()
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not review proposal.') }
+    finally { setBusy(false) }
+  }
+  const activeFindings = data.findings.filter((item) => item.status === 'active')
+  return <>
+    {canCreate && <section className="panel proposal-draft"><PanelHeading title="Draft a remediation proposal" subtitle="Proposals capture a suggested change for human review. They never apply infrastructure changes." />
+      {activeFindings.length ? <form onSubmit={(event) => void createProposal(event)}>
+        <label className="field-label">Active finding<select name="finding_id" required defaultValue=""><option value="" disabled>Select a finding</option>{activeFindings.map((finding) => <option key={finding.id} value={finding.id}>{finding.resource_address} · {finding.severity}</option>)}</select></label>
+        <label className="field-label">Title<input name="title" required maxLength={160} placeholder="Restore declared configuration" /></label>
+        <label className="field-label">Summary<textarea name="summary" required minLength={10} maxLength={4000} rows={2} placeholder="Describe the observed issue and desired result." /></label>
+        <label className="field-label">Proposed action<textarea name="proposed_action" required minLength={5} maxLength={4000} rows={2} placeholder="Describe a safe, reviewable action." /></label>
+        {error && <p className="proposal-error" role="alert">{error}</p>}
+        <button className="button button-primary" type="submit" disabled={busy}>{busy ? 'Submitting…' : 'Submit for review'}</button>
+      </form> : <EmptyState compact icon="✓" title="No active findings" description="Run a scan and resolve any drift findings before proposing remediation." />}
+    </section>}
+    <section className="panel proposal-panel"><PanelHeading title="Remediation proposals" subtitle="Operator drafts and administrator review decisions" />
+      {error && !canCreate && <p className="proposal-error" role="alert">{error}</p>}
+      {data.proposals.length ? <div className="proposal-list">{data.proposals.map((item) => <article className="proposal-card" key={item.id}>
+        <div className="proposal-card-heading"><div><h3>{item.proposal.title ?? 'GitHub issue proposal'}</h3><small>Finding {item.finding_id.slice(0, 8)} · {formatDate(item.created_at)}</small></div><span className={`pill ${item.status === 'approved' ? 'pill-green' : item.status === 'rejected' ? 'pill-red' : 'pill-blue'}`}>{capitalize(item.status.split('_').join(' '))}</span></div>
+        {item.proposal.summary && <p>{item.proposal.summary}</p>}{item.proposal.proposed_action && <div className="proposal-action"><strong>Proposed action</strong><p>{item.proposal.proposed_action}</p></div>}
+        {item.proposal.review?.note && <small>Review note: {item.proposal.review.note}</small>}
+        {canReview && item.status === 'proposed' && <div className="proposal-actions"><button className="button button-quiet button-small" disabled={busy} onClick={() => void review(item.id, 'rejected')}>Reject</button><button className="button button-primary button-small" disabled={busy} onClick={() => void review(item.id, 'approved')}>Approve</button></div>}
+      </article>)}</div> : <EmptyState icon="✓" title="No proposals yet" description="Draft a proposal from an active finding. Administrator decisions are recorded in the audit log." />}
+    </section>
+  </>
 }
 
 function SourceOverview({ data, onAdd }: { data: DashboardData; onAdd: () => void }) {

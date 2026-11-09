@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -153,6 +153,43 @@ class GitHubIssueOut(BaseModel):
     issue_number: int
     issue_url: str
     created: bool
+
+
+class RemediationProposalCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+    summary: str = Field(min_length=10, max_length=4000)
+    proposed_action: str = Field(min_length=5, max_length=4000)
+
+    @field_validator("title", "summary", "proposed_action")
+    @classmethod
+    def trim_proposal_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("proposal text cannot be blank")
+        return value
+
+
+class RemediationReview(BaseModel):
+    decision: Literal["approved", "rejected"]
+    note: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("note")
+    @classmethod
+    def trim_review_note(cls, value: str | None) -> str | None:
+        return value.strip() if value else value
+
+
+class RemediationProposalOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    finding_id: uuid.UUID
+    status: str
+    branch_name: str | None
+    pull_request_url: str | None
+    proposal: dict
+    created_at: datetime
+    updated_at: datetime
 
 
 class PolicyCreate(BaseModel):

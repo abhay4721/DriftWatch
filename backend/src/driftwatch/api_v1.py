@@ -1,6 +1,7 @@
 """Versioned REST API for project configuration and scan history."""
 
 import uuid
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -8,7 +9,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from driftwatch.auth import get_current_user, require_operator
+from driftwatch.auth import get_current_user, require_admin, require_operator
 from driftwatch.config import settings
 from driftwatch.database import get_db
 from driftwatch.db_models import (
@@ -41,6 +42,9 @@ from driftwatch.schemas import (
     PolicyOut,
     ProjectCreate,
     ProjectOut,
+    RemediationProposalCreate,
+    RemediationProposalOut,
+    RemediationReview,
     ResourceChangeOut,
     ResourceOut,
     ScanOut,
@@ -384,6 +388,110 @@ def get_finding(finding_id: uuid.UUID, db: Session = Depends(get_db)) -> Finding
     ]
     finding_data = FindingOut.model_validate(finding).model_dump()
     return FindingDetailOut(**finding_data, changes=out_changes)
+
+
+@router.get("/proposals", response_model=Page[RemediationProposalOut])
+def list_remediation_proposals(
+    proposal_status: Literal[
+        "proposed", "approved", "rejected", "github_issue_opened"
+    ] | None = Query(default=None, alias="status"),
+    page: tuple[int, int] = Depends(_page_args),
+    db: Session = Depends(get_db),
+) -> Page[RemediationProposalOut]:
+    filters = [] if proposal_status is None else [RemediationProposal.status == proposal_status]
+    limit, offset = page
+    statement = (
+        select(RemediationProposal)
+        .where(*filters)
+        .order_by(RemediationProposal.created_at.desc(), RemediationProposal.id)
+    )
+    count = select(func.count()).select_from(RemediationProposal).where(*filters)
+    return _paged(db, statement, count, limit, offset, RemediationProposalOut)
+
+
+@router.post(
+    "/findings/{finding_id}/proposals",
+    response_model=RemediationProposalOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_operator)],
+)
+def create_remediation_proposal(
+    finding_id: uuid.UUID,
+    payload: RemediationProposalCreate,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+) -> RemediationProposal:
+    finding = _get_or_404(db, DriftFinding, finding_id, "Finding")
+    if finding.status != "active":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "finding_resolved", "message": "A proposal requires an active finding"},
+        )
+    proposal = RemediationProposal(
+        id=uuid.uuid4(),
+        finding_id=finding_id,
+        status="proposed",
+        proposal={
+            "title": payload.title,
+            "summary": payload.summary,
+            "proposed_action": payload.proposed_action,
+        },
+    )
+    db.add(proposal)
+    _record_audit(
+        db,
+        "remediation.proposed",
+        "remediation_proposal",
+        proposal.id,
+        {"finding_id": str(finding_id), "title": payload.title},
+        actor.id,
+    )
+    _commit(db)
+    db.refresh(proposal)
+    return proposal
+
+
+@router.post(
+    "/proposals/{proposal_id}/review",
+    response_model=RemediationProposalOut,
+    dependencies=[Depends(require_admin)],
+)
+def review_remediation_proposal(
+    proposal_id: uuid.UUID,
+    payload: RemediationReview,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+) -> RemediationProposal:
+    proposal = _get_or_404(db, RemediationProposal, proposal_id, "Remediation proposal")
+    if proposal.status != "proposed":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "proposal_already_reviewed",
+                "message": "This proposal is no longer awaiting review",
+            },
+        )
+    proposal.status = payload.decision
+    proposal.proposal = {
+        **proposal.proposal,
+        "review": {
+            "decision": payload.decision,
+            "note": payload.note,
+            "reviewed_by": str(actor.id),
+            "reviewed_at": datetime.now(UTC).isoformat(),
+        },
+    }
+    _record_audit(
+        db,
+        f"remediation.{payload.decision}",
+        "remediation_proposal",
+        proposal.id,
+        {"finding_id": str(proposal.finding_id)},
+        actor.id,
+    )
+    _commit(db)
+    db.refresh(proposal)
+    return proposal
 
 
 @router.post(

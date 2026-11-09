@@ -15,6 +15,7 @@ from driftwatch.db_models import (
     InfrastructureSource,
     Notification,
     Project,
+    RemediationProposal,
     ResourceChange,
     Scan,
 )
@@ -198,6 +199,73 @@ def test_notification_list_count_and_read_actions() -> None:
         bulk = client.post("/api/v1/notifications/read-all")
         assert bulk.json() == {"read_count": 1}
         assert client.get("/api/v1/notifications/unread-count").json() == {"count": 0}
+
+
+def test_remediation_proposal_requires_review_and_does_not_apply_changes() -> None:
+    with client_with_database() as (client, factory):
+        with factory() as db:
+            project = Project(name="remediation")
+            db.add(project)
+            db.flush()
+            environment = Environment(project_id=project.id, name="test")
+            db.add(environment)
+            db.flush()
+            source = InfrastructureSource(
+                environment_id=environment.id,
+                name="source",
+                provider="opentofu",
+                path="demo/tofu-local",
+            )
+            db.add(source)
+            db.flush()
+            scan = Scan(source_id=source.id, status="drift", resource_count=1)
+            db.add(scan)
+            db.flush()
+            finding = DriftFinding(
+                scan_id=scan.id,
+                source_id=source.id,
+                fingerprint="p" * 64,
+                resource_address="local_file.demo",
+                resource_type="local_file",
+                severity="medium",
+            )
+            db.add(finding)
+            db.commit()
+            finding_id = finding.id
+
+        created = client.post(
+            f"/api/v1/findings/{finding_id}/proposals",
+            json={
+                "title": "Restore declared content",
+                "summary": "The observed file content differs from the declared value.",
+                "proposed_action": (
+                    "Review and update the local file through the approved workflow."
+                ),
+            },
+        )
+        assert created.status_code == 201
+        proposal = created.json()
+        assert proposal["status"] == "proposed"
+        proposal_id = proposal["id"]
+        assert client.get("/api/v1/proposals?status=proposed").json()["total"] == 1
+
+        approved = client.post(
+            f"/api/v1/proposals/{proposal_id}/review",
+            json={"decision": "approved", "note": "Reviewed by operations"},
+        )
+        assert approved.status_code == 200
+        assert approved.json()["status"] == "approved"
+        assert approved.json()["proposal"]["review"]["decision"] == "approved"
+        assert client.post(
+            f"/api/v1/proposals/{proposal_id}/review", json={"decision": "rejected"}
+        ).status_code == 409
+
+        with factory() as db:
+            stored = db.get(RemediationProposal, uuid.UUID(proposal_id))
+            assert stored is not None
+            assert stored.proposal["title"] == "Restore declared content"
+            assert stored.branch_name is None
+            assert stored.pull_request_url is None
 
 
 def test_scan_history_and_finding_details_redact_sensitive_values() -> None:

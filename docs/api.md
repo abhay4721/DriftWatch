@@ -19,6 +19,14 @@ The worker records in-app notifications when a finding first appears, a finding 
 
 Notifications are workspace-wide in this single-workspace release; read state is shared across users.
 
+## Remediation proposals (Phase 10)
+
+Operators and administrators can draft a proposal for an active finding. Proposals record a title, summary, and suggested action for review. Administrators can approve or reject a proposal once; the decision and reviewer are recorded in proposal metadata and the audit log. Approval only records human review. It does not execute OpenTofu, Kubernetes, shell commands, or otherwise change infrastructure. This phase does not publish pull requests.
+
+- `GET /api/v1/proposals?status=proposed&limit=50&offset=0` lists proposals; `status` may be `proposed`, `approved`, `rejected`, or `github_issue_opened`.
+- `POST /api/v1/findings/{finding_id}/proposals` creates a proposal for an active finding. The JSON body contains `title`, `summary`, and `proposed_action`.
+- `POST /api/v1/proposals/{proposal_id}/review` lets an administrator record `{"decision":"approved","note":"Reviewed"}` or `{"decision":"rejected","note":"Needs changes"}`. The note is optional.
+
 DriftWatch persists project configuration and scan history in PostgreSQL. SQLAlchemy models are maintained in `backend/src/driftwatch/db_models.py`; Alembic migrations live in `backend/migrations`. Compose runs `alembic upgrade head` before starting the API. For a local development database, run the migration from the repository root:
 
 ```powershell
