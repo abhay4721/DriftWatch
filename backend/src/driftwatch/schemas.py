@@ -147,6 +147,14 @@ class FindingDetailOut(FindingOut):
     changes: list[ResourceChangeOut]
 
 
+class GitHubIssueOut(BaseModel):
+    proposal_id: uuid.UUID
+    repository: str
+    issue_number: int
+    issue_url: str
+    created: bool
+
+
 class PolicyCreate(BaseModel):
     project_id: uuid.UUID | None = None
     name: str = Field(min_length=1, max_length=120)

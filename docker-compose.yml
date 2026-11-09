@@ -30,6 +30,8 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://driftwatch:change-this-local-password@postgres:5432/driftwatch}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DRIFTWATCH_GITHUB_REPOSITORY: ${DRIFTWATCH_GITHUB_REPOSITORY:-}
+      DRIFTWATCH_GITHUB_TOKEN: ${DRIFTWATCH_GITHUB_TOKEN:-}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

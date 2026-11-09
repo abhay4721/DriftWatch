@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     )
     schedule_interval_seconds: int = Field(
         default=3600, validation_alias="DRIFTWATCH_SCHEDULE_INTERVAL_SECONDS"
+    )
+    github_token: SecretStr | None = Field(default=None, validation_alias="DRIFTWATCH_GITHUB_TOKEN")
+    github_repository: str | None = Field(
+        default=None, validation_alias="DRIFTWATCH_GITHUB_REPOSITORY"
     )
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

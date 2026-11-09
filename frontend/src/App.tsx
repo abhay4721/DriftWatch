@@ -186,7 +186,17 @@ function Resources({ data }: { data: DashboardData }) {
 }
 
 function Findings({ data }: { data: DashboardData }) {
-  return <section className="panel table-panel"><PanelHeading title="Drift findings" subtitle="Changes detected between declared and observed infrastructure" />{data.findings.length ? <FindingTable findings={data.findings} sources={data.sources} /> : <EmptyState icon="⌁" title="No findings to show" description="When a scan detects infrastructure drift, findings and recommended actions will appear here." />}</section>
+  const [issues, setIssues] = useState<Record<string, { url?: string; error?: string; busy?: boolean }>>({})
+  async function publishIssue(findingId: string) {
+    setIssues((current) => ({ ...current, [findingId]: { busy: true } }))
+    try {
+      const result = await api<{ issue_url: string }>(`/findings/${findingId}/github-issue`, { method: 'POST' })
+      setIssues((current) => ({ ...current, [findingId]: { url: result.issue_url } }))
+    } catch (cause) {
+      setIssues((current) => ({ ...current, [findingId]: { error: cause instanceof Error ? cause.message : 'Could not create GitHub issue.' } }))
+    }
+  }
+  return <section className="panel table-panel"><PanelHeading title="Drift findings" subtitle="Changes detected between declared and observed infrastructure" />{data.findings.length ? <div className="table-wrap"><table><thead><tr><th>Resource</th><th>Severity</th><th>Finding status</th><th>Source</th><th>Last detected</th><th>GitHub</th></tr></thead><tbody>{data.findings.map((finding) => { const issue = issues[finding.id]; return <tr key={finding.id}><td><div className="primary-cell"><span className="finding-symbol">⌁</span><span><strong>{finding.resource_address}</strong><small>{finding.resource_type}</small></span></div></td><td><span className={`severity severity-${finding.severity.toLowerCase()}`}><i />{capitalize(finding.severity)}</span></td><td><span className={`pill ${finding.status === 'active' ? 'pill-amber' : 'pill-gray'}`}>{capitalize(finding.status)}</span></td><td>{data.sources.find((source) => source.id === finding.source_id)?.name ?? '—'}</td><td>{formatDate(finding.last_seen_at)}</td><td>{issue?.url ? <a className="github-link" href={issue.url} target="_blank" rel="noreferrer">Open issue ↗</a> : <div><button className="github-action" disabled={issue?.busy} onClick={() => void publishIssue(finding.id)}>{issue?.busy ? 'Sending…' : 'Create issue'}</button>{issue?.error && <small className="github-error">{issue.error}</small>}</div>}</td></tr> })}</tbody></table></div> : <EmptyState icon="⌁" title="No findings to show" description="When a scan detects infrastructure drift, findings and recommended actions will appear here." />}</section>
 }
 
 function FindingTable({ findings, sources }: { findings: Finding[]; sources: Source[] }) {

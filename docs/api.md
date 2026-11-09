@@ -28,6 +28,7 @@ OpenAPI is available at `/docs`; all application endpoints are under `/api/v1`.
 | `GET` | `/api/v1/scans/{scan_id}/findings` | Read findings recorded for a scan |
 | `GET` | `/api/v1/findings` | Filter findings by `source_id`, `status`, or `severity` |
 | `GET` | `/api/v1/findings/{finding_id}` | Read finding details and attribute changes |
+| `POST` | `/api/v1/findings/{finding_id}/github-issue` | Explicitly publish a sanitized finding summary as a GitHub issue |
 | `POST`, `GET` | `/api/v1/policies` | Create and list JSON policies |
 | `GET` | `/api/v1/audit-logs` | Read audit events; filter by `entity_type` or `entity_id` |
 
@@ -36,3 +37,7 @@ List routes return `{ "items": [...], "total": 0, "limit": 50, "offset": 0 }`. `
 The schema includes users, projects, environments, infrastructure sources, resources, scans, drift findings and their attribute changes, policies, notifications, remediation proposals, and audit logs. Manual scan requests are queued and processed asynchronously by the worker. The web process never executes infrastructure commands. The scheduler queues recurring scans for enabled OpenTofu sources based on `DRIFTWATCH_SCHEDULE_INTERVAL_SECONDS` (default 3600 seconds). The current worker supports OpenTofu sources only.
 
 In Compose, source paths are relative to the mounted `demo/` directory. For example, configure the source path as `tofu-local` to scan `demo/tofu-local`. OpenTofu initialization may create `.terraform` files and a provider lock file in that source directory. Set `DRIFTWATCH_SCAN_TIMEOUT_SECONDS`, `DRIFTWATCH_WORKER_POLL_SECONDS`, and `DRIFTWATCH_SCHEDULER_POLL_SECONDS` to adjust worker timing.
+
+## GitHub issues
+
+Set `DRIFTWATCH_GITHUB_REPOSITORY=owner/repository` and `DRIFTWATCH_GITHUB_TOKEN` in `.env`, then restart the backend. Use a fine-grained personal access token limited to that repository with **Issues: write** permission. DriftWatch sends only the finding metadata, changed attribute names, and recommended action; expected and observed values are omitted. Posting is an explicit `POST /api/v1/findings/{finding_id}/github-issue` action. A repeated request for a finding returns its previously stored issue instead of opening another one. The integration stores the issue URL and number in the remediation proposal and records an audit event.

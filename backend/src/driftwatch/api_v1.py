@@ -2,11 +2,12 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from driftwatch.config import settings
 from driftwatch.database import get_db
 from driftwatch.db_models import (
     AuditLog,
@@ -15,10 +16,12 @@ from driftwatch.db_models import (
     InfrastructureSource,
     Policy,
     Project,
+    RemediationProposal,
     Resource,
     ResourceChange,
     Scan,
 )
+from driftwatch.github import GitHubIntegrationError, create_issue
 from driftwatch.scan_service import enqueue_scan
 from driftwatch.schemas import (
     AuditLogOut,
@@ -26,6 +29,7 @@ from driftwatch.schemas import (
     EnvironmentOut,
     FindingDetailOut,
     FindingOut,
+    GitHubIssueOut,
     Page,
     PolicyCreate,
     PolicyOut,
@@ -346,6 +350,115 @@ def get_finding(finding_id: uuid.UUID, db: Session = Depends(get_db)) -> Finding
     ]
     finding_data = FindingOut.model_validate(finding).model_dump()
     return FindingDetailOut(**finding_data, changes=out_changes)
+
+
+@router.post(
+    "/findings/{finding_id}/github-issue",
+    response_model=GitHubIssueOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_finding_github_issue(
+    finding_id: uuid.UUID, response: Response, db: Session = Depends(get_db)
+) -> GitHubIssueOut:
+    """Explicitly publish a finding summary to the configured GitHub repository."""
+    finding = db.scalar(
+        select(DriftFinding).where(DriftFinding.id == finding_id).with_for_update()
+    )
+    if finding is None:
+        _get_or_404(db, DriftFinding, finding_id, "Finding")
+    existing = db.scalar(
+        select(RemediationProposal)
+        .where(
+            RemediationProposal.finding_id == finding_id,
+            RemediationProposal.status == "github_issue_opened",
+        )
+        .order_by(RemediationProposal.created_at.desc())
+        .limit(1)
+    )
+    if existing is not None:
+        response.status_code = status.HTTP_200_OK
+        issue_data = existing.proposal
+        return GitHubIssueOut(
+            proposal_id=existing.id,
+            repository=str(issue_data["repository"]),
+            issue_number=int(issue_data["issue_number"]),
+            issue_url=str(issue_data["issue_url"]),
+            created=False,
+        )
+
+    changes = db.scalars(
+        select(ResourceChange)
+        .where(
+            ResourceChange.finding_id == finding_id,
+            ResourceChange.scan_id == finding.scan_id,
+        )
+        .order_by(ResourceChange.attribute_path)
+    ).all()
+    paths = sorted({change.attribute_path.replace("`", "'") for change in changes})
+    address = finding.resource_address.replace("`", "'")
+    resource_type = finding.resource_type.replace("`", "'")
+    title = f"DriftWatch {finding.severity.upper()} drift: {address}"
+    body = "\n".join(
+        [
+            "## Infrastructure drift detected",
+            "",
+            f"- **Severity:** {finding.severity}",
+            f"- **Resource:** `{address}`",
+            f"- **Resource type:** `{resource_type}`",
+            f"- **Finding ID:** `{finding.id}`",
+            f"- **Scan ID:** `{finding.scan_id}`",
+            f"- **Source ID:** `{finding.source_id}`",
+            "",
+            "### Changed attributes",
+            *(f"- `{path}`" for path in paths),
+            "",
+            "### Recommended action",
+            finding.recommended_action or "Review the change through the approved IaC workflow.",
+            "",
+            "Values are omitted from this issue to avoid disclosing infrastructure data.",
+            "Created by DriftWatch after an explicit user request.",
+        ]
+    )
+    try:
+        issue = create_issue(
+            settings.github_repository,
+            settings.github_token,
+            title,
+            body,
+        )
+    except GitHubIntegrationError as exc:
+        raise HTTPException(
+            status_code=exc.http_status,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+
+    proposal = RemediationProposal(
+        id=uuid.uuid4(),
+        finding_id=finding_id,
+        status="github_issue_opened",
+        proposal={
+            "provider": "github",
+            "repository": issue.repository,
+            "issue_number": issue.number,
+            "issue_url": issue.url,
+        },
+    )
+    db.add(proposal)
+    _record_audit(
+        db,
+        "github.issue_created",
+        "finding",
+        finding_id,
+        {"repository": issue.repository, "issue_number": issue.number},
+    )
+    _commit(db)
+    return GitHubIssueOut(
+        proposal_id=proposal.id,
+        repository=issue.repository,
+        issue_number=issue.number,
+        issue_url=issue.url,
+        created=True,
+    )
 
 
 @router.post("/policies", response_model=PolicyOut, status_code=status.HTTP_201_CREATED)
