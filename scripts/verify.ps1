@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('All', '1', '2', '3', '4', '5', '6', '7', '8')]
+    [ValidateSet('All', '1', '2', '3', '4', '5', '6', '7', '8', '9')]
     [string]$Phase = 'All',
     [switch]$StartServices,
     [switch]$BuildServices,
@@ -89,6 +89,7 @@ $runPhase5 = $Phase -in @('All', '5')
 $runPhase6 = $Phase -in @('All', '6')
 $runPhase7 = $Phase -in @('All', '7')
 $runPhase8 = $Phase -in @('All', '8')
+$runPhase9 = $Phase -in @('All', '9')
 
 if ($runPhase1) {
     Write-Host '--- Phase 1: foundation and runtime ---' -ForegroundColor Cyan
@@ -196,6 +197,20 @@ if ($runPhase8) {
         Invoke-CommandCheck 'Frontend authentication build' 'npm' @('run', 'build') $frontendPath 'Run npm install from frontend/, then fix the reported TypeScript/Vite errors.'
     } else {
         Add-Check 'Frontend authentication build' 'SKIP' 'npm or frontend/node_modules is unavailable.' 'Install Node.js and run npm install from frontend/.'
+    }
+}
+
+if ($runPhase9) {
+    Write-Host "`n--- Phase 9: in-app notifications ---" -ForegroundColor Cyan
+    Invoke-CommandCheck 'Notification API and lifecycle tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', $pytestBaseTemp, 'backend/tests/test_automation.py', 'backend/tests/test_api_v1.py') $repoRoot 'Review the failure details and install backend requirements if modules are missing.'
+    Invoke-CommandCheck 'Phase 9 lint' $Python @('-m', 'ruff', 'check', 'backend/src/driftwatch/scan_service.py', 'backend/src/driftwatch/api_v1.py', 'backend/src/driftwatch/schemas.py', 'backend/tests/test_automation.py', 'backend/tests/test_api_v1.py') $repoRoot 'Fix the reported Ruff findings.'
+    Invoke-CommandCheck 'Compose configuration' 'docker' @('compose', 'config', '--quiet') $repoRoot 'Check docker-compose.yml and required .env values.'
+    $npm = Get-Command 'npm' -ErrorAction SilentlyContinue
+    if ($npm -and (Test-Path (Join-Path $frontendPath 'node_modules'))) {
+        Invoke-CommandCheck 'Frontend notifications lint' 'npm' @('run', 'lint') $frontendPath 'Fix the reported ESLint findings.'
+        Invoke-CommandCheck 'Frontend notifications build' 'npm' @('run', 'build') $frontendPath 'Fix the reported TypeScript/Vite errors.'
+    } else {
+        Add-Check 'Frontend notifications checks' 'SKIP' 'npm or frontend/node_modules is unavailable.' 'Install Node.js and run npm install from frontend/.'
     }
 }
 

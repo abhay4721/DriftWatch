@@ -8,6 +8,17 @@ Roles are `admin`, `operator`, and `viewer`. All API v1 data endpoints require a
 
 Set `DRIFTWATCH_JWT_SECRET` to a unique random value of at least 32 characters before deployment. Production mode rejects the built-in development secret and obvious placeholders. Use HTTPS at the deployment edge; bearer tokens are credentials and must not travel over plaintext HTTP.
 
+## Notifications (Phase 9)
+
+The worker records in-app notifications when a finding first appears, a finding resolves, or a scan fails. Repeated scans with the same active finding do not create duplicate alerts. Notification messages omit expected/observed infrastructure values and use the existing `notifications` table.
+
+- `GET /api/v1/notifications?status=unread&limit=50&offset=0` lists notifications (status is optional; `unread` or `read`).
+- `GET /api/v1/notifications/unread-count` returns the unread total.
+- `POST /api/v1/notifications/{notification_id}/read` marks one notification read.
+- `POST /api/v1/notifications/read-all` marks all in-app notifications read and returns the number changed.
+
+Notifications are workspace-wide in this single-workspace release; read state is shared across users.
+
 DriftWatch persists project configuration and scan history in PostgreSQL. SQLAlchemy models are maintained in `backend/src/driftwatch/db_models.py`; Alembic migrations live in `backend/migrations`. Compose runs `alembic upgrade head` before starting the API. For a local development database, run the migration from the repository root:
 
 ```powershell

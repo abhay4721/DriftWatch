@@ -122,4 +122,16 @@ tbody tr:hover { background: #141e2d; }
 .auth-error { margin: -7px 0 16px; border: 1px solid #63333c; border-radius: 6px; background: #291a23; padding: 10px; color: #ffa0a4; font-size: 11px; }
 .auth-hint { display: block; margin: -5px 0 12px; color: #8290a7; font-size: 10px; line-height: 1.5; }
 .logout-button { border: 1px solid #2b3850; border-radius: 5px; background: #141b2b; padding: 5px 7px; color: #9eb0ca; font-size: 9px; }
+.notification-list { display: grid; }
+.notification-item { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid #202839; padding: 16px 20px; }
+.notification-item:last-child { border-bottom: 0; }
+.notification-unread { background: #141e2d; }
+.notification-icon { display: grid; width: 34px; height: 34px; flex: none; place-items: center; border: 1px solid #2b3d58; border-radius: 9px; background: #17253a; color: #7eb8ff; font-weight: 700; }
+.notification-scan_failed { border-color: #62323a; background: #2b1c24; color: #ff969b; }
+.notification-drift_resolved { border-color: #235342; background: #162923; color: #78ddb0; }
+.notification-copy { min-width: 0; flex: 1; }
+.notification-title-row { display: flex; align-items: center; gap: 9px; color: #e6edfa; font-size: 12px; }
+.notification-copy p { margin: 5px 0; color: #9aa9bf; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.notification-copy small { color: #71819a; font-size: 10px; }
+@media (max-width: 600px) { .notification-item { align-items: flex-start; flex-wrap: wrap; padding: 14px; }.notification-copy { width: calc(100% - 50px); }.notification-item > button { margin-left: 48px; } }
 @media (max-width: 420px) { .nav-item { height: 35px; gap: 6px; font-size: 10px; }.nav-icon { font-size: 14px; }.metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.metric-foot { font-size: 9px; }.heading-actions { align-self: flex-start; margin: 0; }.page-heading { gap: 12px; }.search-box { width: 130px; }.panel-heading { align-items: flex-start; }.panel-heading .text-action { margin-top: 3px; } }

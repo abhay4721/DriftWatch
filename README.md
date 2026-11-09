@@ -16,7 +16,7 @@ flowchart LR
   Grafana[Grafana] --> Prometheus
 ```
 
-Compose keeps PostgreSQL on a private internal network. The API joins that network and the application network; browser-facing ports bind to localhost. Worker and scheduler are separate processes. The OpenTofu adapter runs only from the backend code path with argument arrays, timeouts, source-root validation, and refresh-only plans. Phase 3 adds PostgreSQL persistence, Alembic migrations, and versioned project, source, policy, inventory, scan-history, finding, and audit APIs. Phase 4 adds a responsive React dashboard that reads those APIs, summarizes recorded data, supports workspace search, and creates projects. Phase 5 connects manual and scheduled scan queues to the worker, which persists scan outcomes, findings, and finding resolutions. Phase 6 allows operators to publish sanitized finding summaries as GitHub issues. Phase 7 adds an optional read-only Kubernetes manifest adapter. Phase 8 adds JWT authentication, roles, login throttling, security headers, and a non-root application container.
+Compose keeps PostgreSQL on a private internal network. The API joins that network and the application network; browser-facing ports bind to localhost. Worker and scheduler are separate processes. The OpenTofu adapter runs only from the backend code path with argument arrays, timeouts, source-root validation, and refresh-only plans. Phase 3 adds PostgreSQL persistence, Alembic migrations, and versioned project, source, policy, inventory, scan-history, finding, and audit APIs. Phase 4 adds a responsive React dashboard that reads those APIs, summarizes recorded data, supports workspace search, and creates projects. Phase 5 connects manual and scheduled scan queues to the worker, which persists scan outcomes, findings, and finding resolutions. Phase 6 allows operators to publish sanitized finding summaries as GitHub issues. Phase 7 adds an optional read-only Kubernetes manifest adapter. Phase 8 adds JWT authentication, roles, login throttling, security headers, and a non-root application container. Phase 9 adds in-app drift, resolution, and failed-scan notifications.
 
 ## Stack
 
@@ -88,7 +88,7 @@ npm run build
 
 ## Automated verification and diagnostics
 
-Run the Phase 1-8 checks with one command. The script runs backend tests/lint, frontend lint/build when dependencies are installed, validates Compose configuration, and checks service health when the stack is running. It prints a suggested fix for failures and exits nonzero if any check fails.
+Run the Phase 1-9 checks with one command. The script runs backend tests/lint, frontend lint/build when dependencies are installed, validates Compose configuration, and checks service health when the stack is running. It prints a suggested fix for failures and exits nonzero if any check fails.
 
 ```powershell
 .\scripts\verify.ps1
@@ -105,6 +105,7 @@ Select one phase, start the Compose stack as part of verification, or save a JSO
 .\scripts\verify.ps1 -Phase 6
 .\scripts\verify.ps1 -Phase 7
 .\scripts\verify.ps1 -Phase 8
+.\scripts\verify.ps1 -Phase 9
 ```
 
 Run the full Phase 2 clean → drift → clean demo with `-RunDriftDemo`. This initializes and applies the demo's local baseline; each scan verifies that it leaves the OpenTofu state file unchanged.
@@ -122,6 +123,7 @@ Run the full Phase 2 clean → drift → clean demo with `-RunDriftDemo`. This i
 5. Worker and scheduler automation
 6. GitHub integration
 7. Optional Kubernetes adapter (current)
-8. Security and production hardening (current)
+8. Security and production hardening
+9. In-app notifications (current)
 
 Each phase will be reviewed before the next begins.

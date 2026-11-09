@@ -6,13 +6,13 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from driftwatch.config import settings
 from driftwatch.database import SessionLocal
 from driftwatch.db_models import DriftFinding as StoredFinding
-from driftwatch.db_models import InfrastructureSource, Resource, ResourceChange, Scan
+from driftwatch.db_models import InfrastructureSource, Notification, Resource, ResourceChange, Scan
 from driftwatch.drift.adapters.kubernetes import KubernetesAdapter
 from driftwatch.drift.adapters.opentofu import OpenTofuAdapter, ScanError, validate_source_path
 from driftwatch.drift.engine import DriftEngine
@@ -57,18 +57,17 @@ def fail_abandoned_scans() -> int:
     """Close scans left running beyond the adapter timeout after a worker restart."""
     stale_before = datetime.now(UTC) - timedelta(seconds=settings.scan_timeout_seconds + 60)
     with SessionLocal() as db:
-        result = db.execute(
-            update(Scan)
-            .where(Scan.status == "running", Scan.started_at < stale_before)
-            .values(
-                status="failed",
-                completed_at=datetime.now(UTC),
-                error_code="worker_interrupted",
-                error_message="Worker stopped before the scan completed; inspect logs and retry.",
+        abandoned = db.scalars(
+            select(Scan).where(Scan.status == "running", Scan.started_at < stale_before)
+        ).all()
+        for scan in abandoned:
+            _fail(
+                db,
+                scan,
+                "worker_interrupted",
+                "Worker stopped before the scan completed; inspect logs and retry.",
             )
-        )
-        db.commit()
-        return result.rowcount or 0
+        return len(abandoned)
 
 
 def run_source_scan(source: InfrastructureSource) -> ScanReport:
@@ -201,6 +200,7 @@ def execute_scan(
             for finding in report.findings:
                 stored = by_fingerprint.get(finding.id)
                 if stored is None:
+                    was_active = False
                     resource_id = resource_ids.get(finding.resource_address)
                     if resource_id is None:
                         resource = db.scalar(
@@ -227,6 +227,7 @@ def execute_scan(
                     db.add(stored)
                     by_fingerprint[finding.id] = stored
                 else:
+                    was_active = stored.status == "active"
                     stored.scan_id = scan.id
                     stored.status = "active"
                     stored.severity = finding.severity
@@ -235,6 +236,21 @@ def execute_scan(
                     stored.recommended_action = finding.recommended_action
                     stored.last_seen_at = now
                     stored.resolved_at = None
+
+                if not was_active:
+                    _add_notification(
+                        db,
+                        finding_id=stored.id,
+                        payload={
+                            "type": "drift_detected",
+                            "title": f"{finding.severity.title()} drift detected",
+                            "message": f"Drift detected for {finding.resource_address}.",
+                            "severity": finding.severity,
+                            "resource_address": finding.resource_address,
+                            "source_id": str(scan.source_id),
+                            "scan_id": str(scan.id),
+                        },
+                    )
 
                 for change in finding.attribute_changes:
                     db.add(
@@ -254,6 +270,19 @@ def execute_scan(
                     stored.status = "resolved"
                     stored.resolved_at = now
                     stored.last_seen_at = now
+                    _add_notification(
+                        db,
+                        finding_id=stored.id,
+                        payload={
+                            "type": "drift_resolved",
+                            "title": "Drift resolved",
+                            "message": f"Drift for {stored.resource_address} is no longer present.",
+                            "severity": stored.severity,
+                            "resource_address": stored.resource_address,
+                            "source_id": str(scan.source_id),
+                            "scan_id": str(scan.id),
+                        },
+                    )
             db.commit()
     except Exception:
         logger.exception("Could not persist results for scan %s", scan_id)
@@ -268,4 +297,29 @@ def _fail(db: Session, scan: Scan, code: str, message: str) -> None:
     scan.completed_at = datetime.now(UTC)
     scan.error_code = code[:64]
     scan.error_message = message[:2000]
+    _add_notification(
+        db,
+        finding_id=None,
+        payload={
+            "type": "scan_failed",
+            "title": "Infrastructure scan failed",
+            "message": "A scan failed. Review scan history for details.",
+            "error_code": scan.error_code,
+            "source_id": str(scan.source_id),
+            "scan_id": str(scan.id),
+        },
+    )
     db.commit()
+
+
+def _add_notification(db: Session, finding_id: uuid.UUID | None, payload: dict) -> None:
+    db.add(
+        Notification(
+            id=uuid.uuid4(),
+            finding_id=finding_id,
+            channel="in_app",
+            status="unread",
+            payload=payload,
+            sent_at=datetime.now(UTC),
+        )
+    )

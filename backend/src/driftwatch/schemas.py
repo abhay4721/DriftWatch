@@ -188,3 +188,19 @@ class AuditLogOut(BaseModel):
     entity_id: uuid.UUID
     details: dict
     created_at: datetime
+
+
+class NotificationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    finding_id: uuid.UUID | None
+    channel: str
+    status: str
+    payload: dict
+    sent_at: datetime | None
+    created_at: datetime
+
+
+class NotificationReadOut(BaseModel):
+    read_count: int

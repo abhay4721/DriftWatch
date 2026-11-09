@@ -1,9 +1,10 @@
 """Versioned REST API for project configuration and scan history."""
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -15,6 +16,7 @@ from driftwatch.db_models import (
     DriftFinding,
     Environment,
     InfrastructureSource,
+    Notification,
     Policy,
     Project,
     RemediationProposal,
@@ -32,6 +34,8 @@ from driftwatch.schemas import (
     FindingDetailOut,
     FindingOut,
     GitHubIssueOut,
+    NotificationOut,
+    NotificationReadOut,
     Page,
     PolicyCreate,
     PolicyOut,
@@ -550,3 +554,54 @@ def list_audit_logs(
     statement = select(AuditLog).where(*filters).order_by(AuditLog.created_at.desc(), AuditLog.id)
     count = select(func.count()).select_from(AuditLog).where(*filters)
     return _paged(db, statement, count, limit, offset, AuditLogOut)
+
+
+@router.get("/notifications", response_model=Page[NotificationOut])
+def list_notifications(
+    notification_status: Literal["unread", "read"] | None = Query(default=None, alias="status"),
+    page: tuple[int, int] = Depends(_page_args),
+    db: Session = Depends(get_db),
+) -> Page[NotificationOut]:
+    filters = [Notification.channel == "in_app"]
+    if notification_status:
+        filters.append(Notification.status == notification_status)
+    limit, offset = page
+    statement = (
+        select(Notification)
+        .where(*filters)
+        .order_by(Notification.created_at.desc(), Notification.id)
+    )
+    count = select(func.count()).select_from(Notification).where(*filters)
+    return _paged(db, statement, count, limit, offset, NotificationOut)
+
+
+@router.get("/notifications/unread-count")
+def unread_notification_count(db: Session = Depends(get_db)) -> dict[str, int]:
+    count = db.scalar(
+        select(func.count()).select_from(Notification).where(
+            Notification.channel == "in_app", Notification.status == "unread"
+        )
+    )
+    return {"count": count or 0}
+
+
+@router.post("/notifications/{notification_id}/read", response_model=NotificationOut)
+def mark_notification_read(
+    notification_id: uuid.UUID, db: Session = Depends(get_db)
+) -> Notification:
+    notification = _get_or_404(db, Notification, notification_id, "Notification")
+    notification.status = "read"
+    db.commit()
+    db.refresh(notification)
+    return notification
+
+
+@router.post("/notifications/read-all", response_model=NotificationReadOut)
+def mark_all_notifications_read(db: Session = Depends(get_db)) -> NotificationReadOut:
+    result = db.execute(
+        update(Notification)
+        .where(Notification.channel == "in_app", Notification.status == "unread")
+        .values(status="read")
+    )
+    db.commit()
+    return NotificationReadOut(read_count=result.rowcount or 0)

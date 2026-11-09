@@ -13,6 +13,7 @@ from driftwatch.db_models import (
     DriftFinding,
     Environment,
     InfrastructureSource,
+    Notification,
     Project,
     ResourceChange,
     Scan,
@@ -165,6 +166,38 @@ def test_authentication_setup_login_and_role_permissions() -> None:
         unauthenticated = client.get("/api/v1/projects")
         assert unauthenticated.status_code == 401
         assert unauthenticated.headers["www-authenticate"] == "Bearer"
+
+
+def test_notification_list_count_and_read_actions() -> None:
+    with client_with_database() as (client, factory):
+        with factory() as db:
+            first = Notification(
+                channel="in_app",
+                status="unread",
+                payload={"type": "drift_detected", "title": "Drift detected"},
+            )
+            second = Notification(
+                channel="in_app",
+                status="unread",
+                payload={"type": "scan_failed", "title": "Scan failed"},
+            )
+            db.add_all([first, second])
+            db.commit()
+            first_id = first.id
+
+        assert client.get("/api/v1/notifications/unread-count").json() == {"count": 2}
+        unread = client.get("/api/v1/notifications?status=unread")
+        assert unread.status_code == 200
+        assert unread.json()["total"] == 2
+        assert unread.json()["items"][0]["payload"]["title"] in {"Drift detected", "Scan failed"}
+
+        marked = client.post(f"/api/v1/notifications/{first_id}/read")
+        assert marked.status_code == 200
+        assert marked.json()["status"] == "read"
+        assert client.get("/api/v1/notifications/unread-count").json() == {"count": 1}
+        bulk = client.post("/api/v1/notifications/read-all")
+        assert bulk.json() == {"read_count": 1}
+        assert client.get("/api/v1/notifications/unread-count").json() == {"count": 0}
 
 
 def test_scan_history_and_finding_details_redact_sensitive_values() -> None:

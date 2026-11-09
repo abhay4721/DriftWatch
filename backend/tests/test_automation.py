@@ -13,6 +13,7 @@ from driftwatch.db_models import (
     Base,
     Environment,
     InfrastructureSource,
+    Notification,
     Project,
     Resource,
     ResourceChange,
@@ -110,7 +111,19 @@ def test_worker_persists_findings_and_resolves_them_after_clean_scan() -> None:
             assert resource is not None and resource.address == "local_file.example"
             assert finding.resource_id == resource.id
             assert db.scalar(select(ResourceChange).where(ResourceChange.finding_id == finding.id))
+            notifications = db.scalars(select(Notification)).all()
+            assert len(notifications) == 1
+            assert notifications[0].payload["type"] == "drift_detected"
+            assert "expected" not in notifications[0].payload
 
+            queued_repeat = enqueue_scan(db, db.get(InfrastructureSource, source.id), "scheduled")
+            db.commit()
+            repeat_scan_id = queued_repeat.id
+            assert claim_next_scan(db) == repeat_scan_id
+
+        execute_scan(factory, repeat_scan_id, runner=lambda _: report([drift], "drift"))
+        with factory() as db:
+            assert len(db.scalars(select(Notification)).all()) == 1
             queued_clean = enqueue_scan(db, db.get(InfrastructureSource, source.id), "scheduled")
             db.commit()
             clean_scan_id = queued_clean.id
@@ -122,6 +135,9 @@ def test_worker_persists_findings_and_resolves_them_after_clean_scan() -> None:
             resolved = db.scalar(select(StoredFinding).where(StoredFinding.source_id == source.id))
             assert resolved is not None and resolved.status == "resolved"
             assert resolved.resolved_at is not None
+            notifications = db.scalars(select(Notification).order_by(Notification.created_at)).all()
+            assert len(notifications) == 2
+            assert notifications[-1].payload["type"] == "drift_resolved"
 
 
 def test_worker_records_sanitized_adapter_errors() -> None:
@@ -143,6 +159,10 @@ def test_worker_records_sanitized_adapter_errors() -> None:
             assert scan.status == "failed"
             assert scan.error_code == "tofu_not_found"
             assert scan.error_message == "OpenTofu executable was not found."
+            notification = db.scalar(select(Notification))
+            assert notification is not None
+            assert notification.payload["type"] == "scan_failed"
+            assert notification.payload["error_code"] == "tofu_not_found"
 
 
 def test_scheduler_enqueues_due_sources_once(monkeypatch) -> None:

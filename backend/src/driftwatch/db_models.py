@@ -204,7 +204,7 @@ class Notification(Timestamped, Base):
         index=True,
     )
     channel: Mapped[str] = mapped_column(String(32))
-    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    status: Mapped[str] = mapped_column(String(24), default="unread", index=True)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 

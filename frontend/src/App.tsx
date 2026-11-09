@@ -9,9 +9,10 @@ type Scan = { id: string; source_id: string; status: string; trigger_type: strin
 type Finding = { id: string; scan_id: string; source_id: string; resource_address: string; resource_type: string; severity: string; status: string; recommended_action: string | null; last_seen_at: string }
 type AuditLog = { id: string; action: string; entity_type: string; entity_id: string; created_at: string; details: Record<string, unknown> }
 type AuthUser = { id: string; email: string; role: string; is_active: boolean }
-type DashboardData = { projects: Project[]; environments: Environment[]; sources: Source[]; resources: Resource[]; scans: Scan[]; findings: Finding[]; audit: AuditLog[] }
+type NotificationItem = { id: string; finding_id: string | null; channel: string; status: string; payload: Record<string, unknown>; sent_at: string | null; created_at: string }
+type DashboardData = { projects: Project[]; environments: Environment[]; sources: Source[]; resources: Resource[]; scans: Scan[]; findings: Finding[]; audit: AuditLog[]; notifications: NotificationItem[]; unread_count: number }
 
-const emptyData: DashboardData = { projects: [], environments: [], sources: [], resources: [], scans: [], findings: [], audit: [] }
+const emptyData: DashboardData = { projects: [], environments: [], sources: [], resources: [], scans: [], findings: [], audit: [], notifications: [], unread_count: 0 }
 const navItems = [
   { id: 'overview', label: 'Overview', icon: '◫' },
   { id: 'projects', label: 'Projects', icon: '▦' },
@@ -20,6 +21,7 @@ const navItems = [
   { id: 'findings', label: 'Drift findings', icon: '⌁' },
   { id: 'scans', label: 'Scan history', icon: '◷' },
   { id: 'audit', label: 'Audit log', icon: '≡' },
+  { id: 'notifications', label: 'Notifications', icon: '●' },
 ] as const
 type Section = (typeof navItems)[number]['id']
 
@@ -54,11 +56,13 @@ async function loadDashboard(): Promise<DashboardData> {
   const environments = environmentPages.flatMap((page) => page.items)
   const sourcePages = await Promise.all(environments.map((environment) => api<Page<Source>>(`/environments/${environment.id}/sources?limit=100`)))
   const sources = sourcePages.flatMap((page) => page.items)
-  const [resourcePages, scanPages, findingPages, auditPage] = await Promise.all([
+  const [resourcePages, scanPages, findingPages, auditPage, notificationPage, unreadResult] = await Promise.all([
     Promise.all(sources.map((source) => api<Page<Resource>>(`/sources/${source.id}/resources?limit=100`))),
     Promise.all(sources.map((source) => api<Page<Scan>>(`/sources/${source.id}/scans?limit=100`))),
     Promise.all(sources.map((source) => api<Page<Finding>>(`/findings?source_id=${source.id}&limit=100`))),
     api<Page<AuditLog>>('/audit-logs?limit=100'),
+    api<Page<NotificationItem>>('/notifications?limit=100'),
+    api<{ count: number }>('/notifications/unread-count'),
   ])
   return {
     projects, environments, sources,
@@ -66,6 +70,8 @@ async function loadDashboard(): Promise<DashboardData> {
     scans: scanPages.flatMap((page) => page.items).sort((a, b) => b.created_at.localeCompare(a.created_at)),
     findings: findingPages.flatMap((page) => page.items).sort((a, b) => b.last_seen_at.localeCompare(a.last_seen_at)),
     audit: auditPage.items,
+    notifications: notificationPage.items,
+    unread_count: unreadResult.count,
   }
 }
 
@@ -138,6 +144,24 @@ function App() {
     setData(emptyData)
   }
 
+  async function markNotificationRead(notificationId: string) {
+    try {
+      await api<NotificationItem>(`/notifications/${notificationId}/read`, { method: 'POST' })
+      await refresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not update notification.')
+    }
+  }
+
+  async function markAllNotificationsRead() {
+    try {
+      await api<{ read_count: number }>('/notifications/read-all', { method: 'POST' })
+      await refresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not update notifications.')
+    }
+  }
+
   const filtered = useMemo(() => {
     const value = query.trim().toLowerCase()
     if (!value) return data
@@ -154,6 +178,7 @@ function App() {
       scans: data.scans.filter((item) => item.status.toLowerCase().includes(value) || sourceIds.has(item.source_id)),
       findings: data.findings.filter((item) => `${item.resource_address} ${item.severity} ${item.status}`.toLowerCase().includes(value) || sourceIds.has(item.source_id)),
       audit: data.audit.filter((item) => `${item.action} ${item.entity_type}`.toLowerCase().includes(value)),
+      notifications: data.notifications.filter((item) => `${String(item.payload.title ?? '')} ${String(item.payload.message ?? '')} ${item.status}`.toLowerCase().includes(value)),
     }
   }, [data, query])
 
@@ -206,6 +231,7 @@ function App() {
             {section === 'findings' && <Findings data={filtered} />}
             {section === 'scans' && <Scans data={filtered} />}
             {section === 'audit' && <Audit data={filtered} />}
+            {section === 'notifications' && <Notifications data={filtered} onRead={markNotificationRead} onReadAll={markAllNotificationsRead} />}
           </>}
           <footer className="page-footer"><span>DriftWatch <b>·</b> Infrastructure drift detection</span><span>Data refreshes when you open this dashboard <b>·</b> <a href="/docs" target="_blank" rel="noreferrer">API documentation ↗</a></span></footer>
         </div>
@@ -269,6 +295,19 @@ function Scans({ data }: { data: DashboardData }) {
 }
 
 function Audit({ data }: { data: DashboardData }) { return <section className="panel table-panel"><PanelHeading title="Audit log" subtitle="A record of changes made in this workspace" />{data.audit.length ? <div className="table-wrap"><table><thead><tr><th>Action</th><th>Entity</th><th>Details</th><th>Time</th></tr></thead><tbody>{data.audit.map((item) => <tr key={item.id}><td><span className="audit-action"><i />{item.action}</span></td><td><span className="type-pill">{item.entity_type}</span></td><td>{String(item.details.name ?? '—')}</td><td>{formatDate(item.created_at)}</td></tr>)}</tbody></table></div> : <EmptyState icon="≡" title="Your audit log is empty" description="Changes made through the API, such as creating a project, will be recorded here." />}</section> }
+
+function Notifications({ data, onRead, onReadAll }: { data: DashboardData; onRead: (id: string) => void; onReadAll: () => void }) {
+  const unread = data.notifications.filter((item) => item.status === 'unread').length
+  return <section className="panel notification-panel">
+    <PanelHeading title="Notifications" subtitle={`${unread} unread · updates from scans and drift changes`} action={unread ? 'Mark all as read' : undefined} onAction={onReadAll} />
+    {data.notifications.length ? <div className="notification-list">{data.notifications.map((item) => <article className={`notification-item ${item.status === 'unread' ? 'notification-unread' : ''}`} key={item.id}>
+      <span className={`notification-icon notification-${String(item.payload.type ?? 'update')}`}>{item.payload.type === 'scan_failed' ? '!' : item.payload.type === 'drift_resolved' ? '✓' : '↯'}</span>
+      <div className="notification-copy"><div className="notification-title-row"><strong>{String(item.payload.title ?? 'DriftWatch update')}</strong><span className={`pill ${item.status === 'unread' ? 'pill-blue' : 'pill-gray'}`}>{capitalize(item.status)}</span></div>
+        <p>{String(item.payload.message ?? '')}</p><small>{formatDate(item.created_at)}</small></div>
+      {item.status === 'unread' && <button className="button button-quiet button-small" onClick={() => onRead(item.id)}>Mark read</button>}
+    </article>)}</div> : <EmptyState icon="●" title="You’re all caught up" description="Drift detections, resolutions, and failed scans will appear here." />}
+  </section>
+}
 
 function SourceOverview({ data, onAdd }: { data: DashboardData; onAdd: () => void }) {
   if (!data.sources.length) return <div className="source-empty"><div className="source-empty-copy"><span className="provider-icon">＋</span><span><strong>Connect your first source</strong><small>Create a project, add an environment, then connect an OpenTofu, Docker, or Kubernetes source.</small></span></div><button className="button button-secondary" onClick={onAdd}>Add project <span>→</span></button></div>
