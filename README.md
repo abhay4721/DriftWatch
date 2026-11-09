@@ -1,55 +1,92 @@
 # DriftWatch
 
-DriftWatch is a local-first, cloud-agnostic platform for detecting infrastructure configuration drift. It is designed to run on a developer laptop and does not require cloud credentials.
+DriftWatch detects changes between declared infrastructure and its observed state. It provides a web dashboard, an authenticated REST API, background scan workers, and scan history for local development and self-hosted use.
+
+The OpenTofu scanner uses refresh-only plans and does not apply infrastructure changes. Kubernetes scanning is read-only. Remediation proposals are review records: approving a proposal does not execute a change.
+
+## Features
+
+- OpenTofu drift detection and resource inventory
+- Optional read-only Kubernetes manifest scanning
+- Projects, environments, infrastructure sources, scans, findings, and audit history
+- Background workers and scheduled scans
+- Dashboard notifications and human-reviewed remediation proposals
+- Optional GitHub issue creation for findings
+- Prometheus metrics and a provisioned Grafana dashboard
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  Browser[React + Vite] -->|HTTP| API[FastAPI]
-  API --> Worker[Worker process]
-  API --> Scheduler[Scheduler process]
+  Browser[React dashboard] --> API[FastAPI]
   API --> DB[(PostgreSQL)]
+  API --> Worker[Scan worker]
+  API --> Scheduler[Scheduler]
   Worker --> DB
   Scheduler --> DB
-  Prometheus[Prometheus] -->|scrape /metrics| API
+  Prometheus[Prometheus] -->|scrapes metrics| API
   Grafana[Grafana] --> Prometheus
 ```
 
-Compose keeps PostgreSQL on a private internal network. The API joins that network and the application network; browser-facing ports bind to localhost. Worker and scheduler are separate processes. The OpenTofu adapter runs only from the backend code path with argument arrays, timeouts, source-root validation, and refresh-only plans. Phase 3 adds PostgreSQL persistence, Alembic migrations, and versioned project, source, policy, inventory, scan-history, finding, and audit APIs. Phase 4 adds a responsive React dashboard that reads those APIs, summarizes recorded data, supports workspace search, and creates projects. Phase 5 connects manual and scheduled scan queues to the worker, which persists scan outcomes, findings, and finding resolutions. Phase 6 allows operators to publish sanitized finding summaries as GitHub issues. Phase 7 adds an optional read-only Kubernetes manifest adapter. Phase 8 adds JWT authentication, roles, login throttling, security headers, and a non-root application container. Phase 9 adds in-app drift, resolution, and failed-scan notifications. Phase 10 adds operator-drafted remediation proposals with one-time administrator review; approvals never execute infrastructure changes.
+Docker Compose runs the application services. PostgreSQL is available only on the internal Compose network. The dashboard and API ports bind to localhost by default.
 
-## Stack
+## Requirements
 
-- Backend: Python 3.12, FastAPI, SQLAlchemy, Alembic, Pydantic Settings
-- Frontend: React, TypeScript, Vite, Tailwind CSS, Recharts
-- Data: PostgreSQL 16
-- Observability: Prometheus and Grafana
-- Local runtime: Docker Compose
+- Docker Desktop or Docker Engine with the Compose plugin
+- PowerShell 7 or Windows PowerShell
+- A modern browser
 
-## Start locally
+The standalone OpenTofu demo also requires Python 3.12 or later and OpenTofu 1.13 or a compatible version.
 
-Prerequisites: Docker Desktop or Docker Engine with the Compose plugin, PowerShell, and a browser. The first startup downloads container images and package dependencies; afterward the demo runs locally. No cloud credentials or paid services are used.
+## Start the application
+
+From the repository root, run:
 
 ```powershell
 .\scripts\setup.ps1
 .\scripts\start.ps1
 ```
 
+The setup script creates `.env` from `.env.example` if needed and validates the Compose configuration. The start script builds and starts the services.
+
 Open:
 
-- Dashboard: http://localhost:5173
-- API OpenAPI: http://localhost:8000/docs
-- API readiness: http://localhost:8000/health/ready
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000 (credentials from `.env`)
+- Dashboard: <http://localhost:5173>
+- API documentation: <http://localhost:8000/docs>
+- API readiness: <http://localhost:8000/health/ready>
+- Prometheus: <http://localhost:9090>
+- Grafana: <http://localhost:3000>
 
-On first dashboard visit, create the one-time administrator account with a password of at least 12 characters. Later visits require sign-in. For a shared deployment, set a unique `DRIFTWATCH_JWT_SECRET` in `.env` before starting; see [Security and deployment hardening](docs/security.md).
+On first use, create the administrator account from the dashboard. The account setup is available only until the first administrator is created. Sign in with that account on later visits.
 
-To stop containers while keeping local data, run `.\scripts\cleanup.ps1`. To also delete PostgreSQL and observability data, run `.\scripts\cleanup.ps1 -RemoveData`.
+The sample `.env` values are for local development. Before exposing the application beyond your machine, set a unique `DRIFTWATCH_JWT_SECRET` and replace default service credentials. See [Security and deployment hardening](docs/security.md).
 
-## Phase 2 local drift demo
+To stop the services and keep database data:
 
-Prerequisites: OpenTofu 1.13 or compatible, Python 3.12+, and PowerShell. The first `tofu init` downloads the free `hashicorp/local` provider and writes a provider lock file; later scans can run without network access while the provider remains cached.
+```powershell
+.\scripts\cleanup.ps1
+```
+
+To also remove PostgreSQL and observability data:
+
+```powershell
+.\scripts\cleanup.ps1 -RemoveData
+```
+
+## Create a project and run a scan
+
+1. Sign in to the dashboard and create a project.
+2. Open the API documentation at <http://localhost:8000/docs> and authorize with a bearer token. Use `POST /api/v1/auth/token` to sign in and copy the returned `access_token` into Swagger's **Authorize** dialog.
+3. Create an environment with `POST /api/v1/projects/{project_id}/environments`. Get the project ID from `GET /api/v1/projects`.
+4. Create an infrastructure source with `POST /api/v1/environments/{environment_id}/sources`. Get the environment ID from the create response or `GET /api/v1/projects/{project_id}/environments`.
+5. Request a scan with `POST /api/v1/sources/{source_id}/scans`. The endpoint returns `202 Accepted` when the scan is queued. Get the source ID from the create response or `GET /api/v1/environments/{environment_id}/sources`.
+6. Check scan progress and results in the dashboard or through the scan, resource, and finding endpoints in the API documentation.
+
+For an OpenTofu source running through Docker Compose, use the path relative to `demo/`, such as `tofu-local`. The worker mounts that directory as its source root.
+
+## Run the local drift demonstration
+
+The standalone demonstration initializes a local OpenTofu example, applies its baseline once, runs a clean scan, changes a local file to produce drift, restores it, and runs a final clean scan. The scans use refresh-only plans and do not apply changes.
 
 ```powershell
 python -m venv .venv
@@ -57,21 +94,17 @@ python -m venv .venv
 .\scripts\demo.ps1 -Python (Resolve-Path '.venv\Scripts\python.exe').Path -Tofu tofu
 ```
 
-The demo creates the baseline file with one explicit `tofu apply`, runs a clean scan, edits the file out of band, reports the changed `content` attribute, restores the approved value, and confirms a clean scan. Detection itself runs no `apply`, does not update state, and returns sanitized JSON. Run an individual scan with `python -m driftwatch.scan_cli --source tofu-local` from the repository root. Exit codes are `0` for clean, `2` for drift, and `1` for scan errors. The Phase 2 CLI remains available for direct local scans. The Phase 4 dashboard displays persisted projects, environments, sources, resources, findings, scans, and audit events when available. In Compose, source paths are relative to `demo/`; use `tofu-local` to scan `demo/tofu-local`.
+An individual local scan can be run from the repository root:
 
-The OpenTofu integration and parser are described in [Drift detection](docs/drift-detection.md). Phase 3 endpoints and later integrations are described in [Database and API](docs/api.md). Kubernetes setup is described in [Kubernetes drift scans](docs/kubernetes.md). Authentication and deployment controls are described in [Security and deployment hardening](docs/security.md).
-
-## Repository layout
-
-```text
-backend/          FastAPI package, process entrypoints, and tests
-frontend/         React + Vite application
-observability/    Prometheus and Grafana configuration
-scripts/          PowerShell setup, start, and cleanup helpers
-docker-compose.yml Local multi-service environment
+```powershell
+python -m driftwatch.scan_cli --source tofu-local
 ```
 
-## Development checks
+Exit codes are `0` for clean, `2` for detected drift, and `1` for a scan error. See [Drift detection](docs/drift-detection.md) for adapter details.
+
+## Development
+
+Backend dependencies and checks:
 
 ```powershell
 python -m pip install -r backend/requirements-dev.txt
@@ -79,53 +112,43 @@ python -m pytest backend/tests
 python -m ruff check backend
 ```
 
-Frontend checks, after installing frontend dependencies with `npm install` from `frontend/`:
+Frontend checks, after installing dependencies from `frontend/`:
 
 ```powershell
+cd frontend
+npm install
 npm run lint
 npm run build
 ```
 
-## Automated verification and diagnostics
-
-Run the Phase 1-9 checks with one command. The script runs backend tests/lint, frontend lint/build when dependencies are installed, validates Compose configuration, and checks service health when the stack is running. It prints a suggested fix for failures and exits nonzero if any check fails.
+The repository verification script runs checks for all phases or a selected phase. It can optionally start Compose services and save a JSON report. Use `-BuildServices` when rebuilding images:
 
 ```powershell
 .\scripts\verify.ps1
-```
-
-Select one phase, start the Compose stack as part of verification, or save a JSON report. `-StartServices` reuses existing images; add `-BuildServices` only when you want Docker to rebuild them:
-
-```powershell
-.\scripts\verify.ps1 -Phase 1 -StartServices -ReportPath reports/phase1.json
-.\scripts\verify.ps1 -Phase 1 -StartServices -BuildServices
-.\scripts\verify.ps1 -Phase 2
-.\scripts\verify.ps1 -Phase 3
-.\scripts\verify.ps1 -Phase 5
-.\scripts\verify.ps1 -Phase 6
-.\scripts\verify.ps1 -Phase 7
-.\scripts\verify.ps1 -Phase 8
-.\scripts\verify.ps1 -Phase 9
 .\scripts\verify.ps1 -Phase 10
+.\scripts\verify.ps1 -Phase 1 -StartServices -BuildServices
 ```
 
-Run the full Phase 2 clean → drift → clean demo with `-RunDriftDemo`. This initializes and applies the demo's local baseline; each scan verifies that it leaves the OpenTofu state file unchanged.
+The Phase 2 end-to-end demonstration initializes and applies its local baseline before checking clean, drift, and clean results:
 
 ```powershell
 .\scripts\verify.ps1 -Phase 2 -RunDriftDemo -Python .\.venv\Scripts\python.exe -Tofu tofu
 ```
 
-## Roadmap
+## Documentation
 
-1. Foundation and Docker Compose
-2. OpenTofu drift detection engine and offline local demonstration
-3. Database schema, migrations, and versioned API
-4. React dashboard
-5. Worker and scheduler automation
-6. GitHub integration
-7. Optional Kubernetes adapter
-8. Security and production hardening
-9. In-app notifications
-10. Human-reviewed remediation proposals (current)
+- [API and database](docs/api.md)
+- [Drift detection](docs/drift-detection.md)
+- [Kubernetes scanning](docs/kubernetes.md)
+- [Security and deployment hardening](docs/security.md)
 
-Each phase will be reviewed before the next begins.
+## Repository layout
+
+```text
+backend/          FastAPI application, worker, scheduler, and tests
+frontend/         React and Vite dashboard
+demo/             Local OpenTofu example and scan inputs
+observability/    Prometheus and Grafana configuration
+scripts/          PowerShell setup, start, cleanup, and verification scripts
+docker-compose.yml Compose services for local development
+```
