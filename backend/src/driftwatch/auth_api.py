@@ -131,6 +131,9 @@ def setup_first_admin(payload: Credentials, db: Session = Depends(get_db)) -> Ac
             is_active=True,
         )
         db.add(user)
+        # Insert the parent row before its audit entry so PostgreSQL's foreign key
+        # on audit_logs.actor_user_id is satisfied during the same transaction.
+        db.flush()
         db.add(
             AuditLog(
                 actor_user_id=user.id,
@@ -144,11 +147,19 @@ def setup_first_admin(payload: Credentials, db: Session = Depends(get_db)) -> Ac
             db.commit()
         except IntegrityError as exc:
             db.rollback()
+            if _user_count(db) != 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "setup_complete",
+                        "message": "Administrator setup is already complete",
+                    },
+                ) from exc
             raise HTTPException(
-                status_code=409,
+                status_code=500,
                 detail={
-                    "code": "setup_complete",
-                    "message": "Administrator setup is already complete",
+                    "code": "setup_failed",
+                    "message": "Administrator setup failed; check the backend logs.",
                 },
             ) from exc
         db.refresh(user)
