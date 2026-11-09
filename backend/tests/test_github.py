@@ -137,6 +137,12 @@ def test_finding_issue_is_explicit_sanitized_and_idempotent(monkeypatch) -> None
             db.commit()
 
         with TestClient(app) as client:
+            auth = client.post(
+                "/api/v1/auth/setup",
+                json={"email": "admin@example.com", "password": "Admin-Test-Password-123!"},
+            )
+            assert auth.status_code == 201
+            client.headers.update({"Authorization": f"Bearer {auth.json()['access_token']}"})
             first = client.post(f"/api/v1/findings/{finding_id}/github-issue")
             second = client.post(f"/api/v1/findings/{finding_id}/github-issue")
 
@@ -156,5 +162,5 @@ def test_finding_issue_is_explicit_sanitized_and_idempotent(monkeypatch) -> None
             assert len(proposals) == 1
             assert proposals[0].status == "github_issue_opened"
             assert proposals[0].proposal["issue_number"] == 17
-            assert len(audit) == 1
-            assert audit[0].action == "github.issue_created"
+            assert len(audit) == 2
+            assert {item.action for item in audit} == {"auth.admin_setup", "github.issue_created"}

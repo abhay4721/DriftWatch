@@ -1,5 +1,13 @@
 # Phase 3 database and API
 
+## Authentication (Phase 8)
+
+The first visit to the dashboard prompts you to create the one-time administrator account. Subsequent access requires a bearer token. Tokens are issued by `POST /api/v1/auth/token`, last for the configured `DRIFTWATCH_JWT_TTL_MINUTES`, and are held in browser session storage. `GET /api/v1/auth/me` returns the current user's email and role. The OpenAPI UI supports bearer-token authorization.
+
+Roles are `admin`, `operator`, and `viewer`. All API v1 data endpoints require authentication. Viewers can read data; operators and administrators can create projects, environments, sources, scans, GitHub issues, and policies. Only administrators can create users through `POST /api/v1/auth/users`. The initial setup endpoint closes after the first admin is created.
+
+Set `DRIFTWATCH_JWT_SECRET` to a unique random value of at least 32 characters before deployment. Production mode rejects the built-in development secret and obvious placeholders. Use HTTPS at the deployment edge; bearer tokens are credentials and must not travel over plaintext HTTP.
+
 DriftWatch persists project configuration and scan history in PostgreSQL. SQLAlchemy models are maintained in `backend/src/driftwatch/db_models.py`; Alembic migrations live in `backend/migrations`. Compose runs `alembic upgrade head` before starting the API. For a local development database, run the migration from the repository root:
 
 ```powershell

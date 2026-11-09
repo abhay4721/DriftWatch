@@ -8,6 +8,7 @@ type Resource = { id: string; source_id: string; address: string; resource_type:
 type Scan = { id: string; source_id: string; status: string; trigger_type: string; started_at: string | null; completed_at: string | null; resource_count: number; created_at: string }
 type Finding = { id: string; scan_id: string; source_id: string; resource_address: string; resource_type: string; severity: string; status: string; recommended_action: string | null; last_seen_at: string }
 type AuditLog = { id: string; action: string; entity_type: string; entity_id: string; created_at: string; details: Record<string, unknown> }
+type AuthUser = { id: string; email: string; role: string; is_active: boolean }
 type DashboardData = { projects: Project[]; environments: Environment[]; sources: Source[]; resources: Resource[]; scans: Scan[]; findings: Finding[]; audit: AuditLog[] }
 
 const emptyData: DashboardData = { projects: [], environments: [], sources: [], resources: [], scans: [], findings: [], audit: [] }
@@ -23,15 +24,23 @@ const navItems = [
 type Section = (typeof navItems)[number]['id']
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers)
+  headers.set('Content-Type', 'application/json')
+  const token = sessionStorage.getItem('driftwatch_token')
+  if (token) headers.set('Authorization', `Bearer ${token}`)
   const response = await fetch(`/api/v1${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    headers,
   })
+  if (response.status === 401 && !path.startsWith('/auth/')) {
+    sessionStorage.removeItem('driftwatch_token')
+    window.dispatchEvent(new Event('driftwatch:session-expired'))
+  }
   if (!response.ok) {
     let message = `Request failed (${response.status})`
     try {
-      const body = await response.json() as { detail?: { message?: string } | string }
-      message = typeof body.detail === 'string' ? body.detail : body.detail?.message ?? message
+      const body = await response.json() as { error?: { message?: string }; detail?: { message?: string } | string }
+      message = body.error?.message ?? (typeof body.detail === 'string' ? body.detail : body.detail?.message) ?? message
     } catch { /* Keep the status message when the response has no JSON body. */ }
     throw new Error(message)
   }
@@ -69,6 +78,10 @@ function App() {
   const [showProjectForm, setShowProjectForm] = useState(false)
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState('')
+  const [accessToken, setAccessToken] = useState(() => sessionStorage.getItem('driftwatch_token') ?? '')
+  const [authChecked, setAuthChecked] = useState(false)
+  const [setupRequired, setSetupRequired] = useState(false)
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -78,7 +91,52 @@ function App() {
     finally { setLoading(false) }
   }, [])
 
-  useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => {
+    async function checkAuth() {
+      try {
+        if (sessionStorage.getItem('driftwatch_token')) {
+          setCurrentUser(await api<AuthUser>('/auth/me'))
+        } else {
+          const state = await api<{ setup_required: boolean }>('/auth/setup-status')
+          setSetupRequired(state.setup_required)
+        }
+      } catch {
+        sessionStorage.removeItem('driftwatch_token')
+        setAccessToken('')
+        const state = await api<{ setup_required: boolean }>('/auth/setup-status').catch(() => ({ setup_required: false }))
+        setSetupRequired(state.setup_required)
+      } finally { setAuthChecked(true) }
+    }
+    void checkAuth()
+  }, [])
+
+  useEffect(() => {
+    function expireSession() {
+      setAccessToken('')
+      setCurrentUser(null)
+      setData(emptyData)
+    }
+    window.addEventListener('driftwatch:session-expired', expireSession)
+    return () => window.removeEventListener('driftwatch:session-expired', expireSession)
+  }, [])
+
+  useEffect(() => { if (accessToken) void refresh() }, [accessToken, refresh])
+
+  async function authenticate(email: string, password: string) {
+    const result = await api<{ access_token: string }>(setupRequired ? '/auth/setup' : '/auth/token', {
+      method: 'POST', body: JSON.stringify({ email, password }),
+    })
+    sessionStorage.setItem('driftwatch_token', result.access_token)
+    setAccessToken(result.access_token)
+    setCurrentUser(await api<AuthUser>('/auth/me'))
+  }
+
+  function logout() {
+    sessionStorage.removeItem('driftwatch_token')
+    setAccessToken('')
+    setCurrentUser(null)
+    setData(emptyData)
+  }
 
   const filtered = useMemo(() => {
     const value = query.trim().toLowerCase()
@@ -117,6 +175,9 @@ function App() {
   const activeFindings = data.findings.filter((item) => item.status === 'open' || item.status === 'active')
   const criticalCount = activeFindings.filter((item) => item.severity.toLowerCase() === 'critical').length
 
+  if (!authChecked) return <div className="auth-shell"><div className="auth-card">Checking your session…</div></div>
+  if (!accessToken) return <AuthenticationScreen setupRequired={setupRequired} onAuthenticate={authenticate} />
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -128,7 +189,7 @@ function App() {
         <nav className="nav-list" aria-label="Main navigation">
           {navItems.map((item) => <button key={item.id} className={`nav-item ${section === item.id ? 'selected' : ''}`} onClick={() => setSection(item.id)}><span className="nav-icon">{item.icon}</span>{item.label}{item.id === 'findings' && activeFindings.length > 0 && <span className="nav-count">{activeFindings.length}</span>}</button>)}
         </nav>
-        <div className="sidebar-bottom"><div className="api-indicator"><span className={`status-dot ${error ? 'offline' : ''}`} /><span>{error ? 'API unavailable' : 'API connected'}</span><button title="Refresh data" onClick={() => void refresh()} aria-label="Refresh data">↻</button></div><div className="user-profile"><div className="user-avatar">A</div><span>Administrator<small>Local session</small></span><span className="chevron">···</span></div></div>
+        <div className="sidebar-bottom"><div className="api-indicator"><span className={`status-dot ${error ? 'offline' : ''}`} /><span>{error ? 'API unavailable' : 'API connected'}</span><button title="Refresh data" onClick={() => void refresh()} aria-label="Refresh data">↻</button></div><div className="user-profile"><div className="user-avatar">{currentUser?.email.slice(0, 1).toUpperCase() ?? 'U'}</div><span>{currentUser?.email ?? 'User'}<small>{currentUser?.role ?? 'Authenticated'}</small></span><button className="logout-button" onClick={logout}>Sign out</button></div></div>
       </aside>
 
       <main className="main-area">
@@ -219,5 +280,34 @@ function ActivityList({ items }: { items: AuditLog[] }) { return <div className=
 function formatDate(value: string | null) { return value ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '—' }
 function formatRelative(value: string) { const elapsed = Date.now() - new Date(value).getTime(); if (elapsed < 60_000) return 'Just now'; if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)} min ago`; if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)} hr ago`; return formatDate(value) }
 function capitalize(value: string) { return value ? value[0].toUpperCase() + value.slice(1) : 'Unknown' }
+
+function AuthenticationScreen({ setupRequired, onAuthenticate }: { setupRequired: boolean; onAuthenticate: (email: string, password: string) => Promise<void> }) {
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const values = new FormData(event.currentTarget)
+    setBusy(true)
+    setError('')
+    try {
+      await onAuthenticate(String(values.get('email') ?? ''), String(values.get('password') ?? ''))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Authentication failed.')
+    } finally { setBusy(false) }
+  }
+
+  return <div className="auth-shell"><form className="auth-card" onSubmit={submit}>
+    <div className="brand auth-brand"><span className="brand-mark">D</span><span>Drift<span className="brand-light">Watch</span></span></div>
+    <div className="eyebrow">SECURE WORKSPACE</div>
+    <h1>{setupRequired ? 'Create administrator account' : 'Welcome back'}</h1>
+    <p>{setupRequired ? 'Set up the first account. It will have administrator access.' : 'Sign in to view your infrastructure workspace.'}</p>
+    {error && <div className="auth-error" role="alert">{error}</div>}
+    <label className="field-label">Email<input name="email" type="email" autoComplete="username" required maxLength={320} /></label>
+    <label className="field-label">Password<input name="password" type="password" autoComplete={setupRequired ? 'new-password' : 'current-password'} minLength={12} required maxLength={256} /></label>
+    {setupRequired && <small className="auth-hint">Use at least 12 characters. The setup form closes after the first administrator is created.</small>}
+    <button className="button button-primary auth-submit" type="submit" disabled={busy}>{busy ? 'Please wait…' : setupRequired ? 'Create account' : 'Sign in'}</button>
+  </form></div>
+}
 
 export default App

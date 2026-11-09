@@ -10,7 +10,7 @@ The worker image includes `kubectl`, but it needs a kubeconfig mounted into the 
 services:
   worker:
     volumes:
-      - C:/Users/your-user/.kube/config:/root/.kube/config:ro
+      - C:/Users/your-user/.kube/config:/home/driftwatch/.kube/config:ro
 ```
 
 Replace the host path with your kubeconfig location, then rebuild the backend and worker:

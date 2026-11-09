@@ -40,6 +40,12 @@ def client_with_database() -> Generator[tuple[TestClient, sessionmaker[Session]]
     app.dependency_overrides[get_db] = override_db
     try:
         with TestClient(app) as client:
+            auth = client.post(
+                "/api/v1/auth/setup",
+                json={"email": "admin@example.com", "password": "Admin-Test-Password-123!"},
+            )
+            assert auth.status_code == 201
+            client.headers.update({"Authorization": f"Bearer {auth.json()['access_token']}"})
             yield client, factory
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -115,6 +121,50 @@ def test_conflicts_validation_and_missing_resources_use_standard_errors() -> Non
         assert invalid.json()["error"]["code"] == "validation_error"
         assert missing.status_code == 404
         assert missing.json()["error"]["code"] == "not_found"
+
+
+def test_authentication_setup_login_and_role_permissions() -> None:
+    with client_with_database() as (client, _):
+        assert client.get("/api/v1/auth/setup-status").json() == {"setup_required": False}
+        assert client.get("/api/v1/projects").headers["x-frame-options"] == "DENY"
+        assert client.post(
+            "/api/v1/auth/setup",
+            json={"email": "second-admin@example.com", "password": "Another-Password-123!"},
+        ).status_code == 409
+
+        invalid = client.post(
+            "/api/v1/auth/token",
+            json={"email": "admin@example.com", "password": "wrong-password-123"},
+        )
+        assert invalid.status_code == 401
+        assert invalid.json()["error"]["code"] == "invalid_credentials"
+
+        viewer = client.post(
+            "/api/v1/auth/users",
+            json={
+                "email": "viewer@example.com",
+                "password": "Viewer-Password-123!",
+                "role": "viewer",
+            },
+        )
+        assert viewer.status_code == 201
+        assert "password_hash" not in viewer.json()
+
+        login = client.post(
+            "/api/v1/auth/token",
+            json={"email": "viewer@example.com", "password": "Viewer-Password-123!"},
+        )
+        assert login.status_code == 200
+        client.headers.update({"Authorization": f"Bearer {login.json()['access_token']}"})
+        assert client.get("/api/v1/projects").status_code == 200
+        denied = client.post("/api/v1/projects", json={"name": "viewer-project"})
+        assert denied.status_code == 403
+        assert denied.json()["error"]["code"] == "forbidden"
+
+        client.headers.pop("Authorization")
+        unauthenticated = client.get("/api/v1/projects")
+        assert unauthenticated.status_code == 401
+        assert unauthenticated.headers["www-authenticate"] == "Bearer"
 
 
 def test_scan_history_and_finding_details_redact_sensitive_values() -> None:

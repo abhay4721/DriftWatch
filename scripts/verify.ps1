@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('All', '1', '2', '3', '4', '5', '6', '7')]
+    [ValidateSet('All', '1', '2', '3', '4', '5', '6', '7', '8')]
     [string]$Phase = 'All',
     [switch]$StartServices,
     [switch]$BuildServices,
@@ -88,6 +88,7 @@ $runPhase3 = $Phase -in @('All', '3')
 $runPhase5 = $Phase -in @('All', '5')
 $runPhase6 = $Phase -in @('All', '6')
 $runPhase7 = $Phase -in @('All', '7')
+$runPhase8 = $Phase -in @('All', '8')
 
 if ($runPhase1) {
     Write-Host '--- Phase 1: foundation and runtime ---' -ForegroundColor Cyan
@@ -183,6 +184,19 @@ if ($runPhase7) {
     Invoke-CommandCheck 'Kubernetes adapter tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', $pytestBaseTemp, 'backend/tests/test_kubernetes_adapter.py', 'backend/tests/test_automation.py', 'backend/tests/test_api_v1.py') $repoRoot 'Review the failure details; install backend requirements if modules are missing.'
     Invoke-CommandCheck 'Phase 7 lint' $Python @('-m', 'ruff', 'check', 'backend/src/driftwatch/config.py', 'backend/src/driftwatch/drift/adapters/kubernetes.py', 'backend/src/driftwatch/scan_service.py', 'backend/src/driftwatch/scheduler.py', 'backend/src/driftwatch/api_v1.py', 'backend/tests/test_kubernetes_adapter.py', 'backend/tests/test_automation.py', 'backend/tests/test_api_v1.py') $repoRoot 'Fix the reported Ruff findings.'
     Invoke-CommandCheck 'Compose configuration' 'docker' @('compose', 'config', '--quiet') $repoRoot 'Check docker-compose.yml and required .env values.'
+}
+
+if ($runPhase8) {
+    Write-Host "`n--- Phase 8: security and production hardening ---" -ForegroundColor Cyan
+    Invoke-CommandCheck 'Authentication and authorization tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', $pytestBaseTemp, 'backend/tests/test_auth.py', 'backend/tests/test_rate_limit.py', 'backend/tests/test_api_v1.py', 'backend/tests/test_github.py') $repoRoot 'Review the failure details and install backend requirements if modules are missing.'
+    Invoke-CommandCheck 'Phase 8 lint' $Python @('-m', 'ruff', 'check', 'backend/src/driftwatch/auth.py', 'backend/src/driftwatch/auth_api.py', 'backend/src/driftwatch/config.py', 'backend/src/driftwatch/main.py', 'backend/src/driftwatch/rate_limit.py', 'backend/src/driftwatch/api_v1.py', 'backend/tests/test_auth.py', 'backend/tests/test_rate_limit.py', 'backend/tests/test_api_v1.py', 'backend/tests/test_github.py') $repoRoot 'Fix the reported Ruff findings.'
+    Invoke-CommandCheck 'Compose configuration' 'docker' @('compose', 'config', '--quiet') $repoRoot 'Check docker-compose.yml and required .env values.'
+    $npm = Get-Command 'npm' -ErrorAction SilentlyContinue
+    if ($npm -and (Test-Path (Join-Path $frontendPath 'node_modules'))) {
+        Invoke-CommandCheck 'Frontend authentication build' 'npm' @('run', 'build') $frontendPath 'Run npm install from frontend/, then fix the reported TypeScript/Vite errors.'
+    } else {
+        Add-Check 'Frontend authentication build' 'SKIP' 'npm or frontend/node_modules is unavailable.' 'Install Node.js and run npm install from frontend/.'
+    }
 }
 
 $failed = @($checks | Where-Object status -eq 'FAIL').Count

@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from driftwatch.auth import get_current_user, require_operator
 from driftwatch.config import settings
 from driftwatch.database import get_db
 from driftwatch.db_models import (
@@ -20,6 +21,7 @@ from driftwatch.db_models import (
     Resource,
     ResourceChange,
     Scan,
+    User,
 )
 from driftwatch.github import GitHubIntegrationError, create_issue
 from driftwatch.scan_service import enqueue_scan
@@ -42,7 +44,7 @@ from driftwatch.schemas import (
     SourceOut,
 )
 
-router = APIRouter(prefix="/api/v1")
+router = APIRouter(prefix="/api/v1", dependencies=[Depends(get_current_user)])
 MAX_PAGE_SIZE = 100
 
 
@@ -62,7 +64,12 @@ def _get_or_404(db: Session, model: type, identifier: uuid.UUID, label: str):
 
 
 def _record_audit(
-    db: Session, action: str, entity_type: str, entity_id: uuid.UUID, details: dict
+    db: Session,
+    action: str,
+    entity_type: str,
+    entity_id: uuid.UUID,
+    details: dict,
+    actor_user_id: uuid.UUID,
 ) -> None:
     db.add(
         AuditLog(
@@ -70,6 +77,7 @@ def _record_audit(
             entity_type=entity_type,
             entity_id=entity_id,
             details=details,
+            actor_user_id=actor_user_id,
         )
     )
 
@@ -94,11 +102,14 @@ def _paged(db: Session, statement, count_statement, limit: int, offset: int, sch
     return Page[schema](items=items, total=total, limit=limit, offset=offset)
 
 
-@router.post("/projects", response_model=ProjectOut, status_code=status.HTTP_201_CREATED)
-def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> Project:
+@router.post("/projects", response_model=ProjectOut, status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_operator)])
+def create_project(
+    payload: ProjectCreate, db: Session = Depends(get_db), actor: User = Depends(get_current_user)
+) -> Project:
     project = Project(id=uuid.uuid4(), name=payload.name.strip(), description=payload.description)
     db.add(project)
-    _record_audit(db, "project.created", "project", project.id, {"name": project.name})
+    _record_audit(db, "project.created", "project", project.id, {"name": project.name}, actor.id)
     _commit(db)
     db.refresh(project)
     return project
@@ -123,9 +134,13 @@ def get_project(project_id: uuid.UUID, db: Session = Depends(get_db)) -> Project
     "/projects/{project_id}/environments",
     response_model=EnvironmentOut,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_operator)],
 )
 def create_environment(
-    project_id: uuid.UUID, payload: EnvironmentCreate, db: Session = Depends(get_db)
+    project_id: uuid.UUID,
+    payload: EnvironmentCreate,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
 ) -> Environment:
     _get_or_404(db, Project, project_id, "Project")
     environment = Environment(
@@ -136,7 +151,12 @@ def create_environment(
     )
     db.add(environment)
     _record_audit(
-        db, "environment.created", "environment", environment.id, {"name": environment.name}
+        db,
+        "environment.created",
+        "environment",
+        environment.id,
+        {"name": environment.name},
+        actor.id,
     )
     _commit(db)
     db.refresh(environment)
@@ -166,9 +186,13 @@ def list_environments(
     "/environments/{environment_id}/sources",
     response_model=SourceOut,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_operator)],
 )
 def create_source(
-    environment_id: uuid.UUID, payload: SourceCreate, db: Session = Depends(get_db)
+    environment_id: uuid.UUID,
+    payload: SourceCreate,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
 ) -> InfrastructureSource:
     _get_or_404(db, Environment, environment_id, "Environment")
     source = InfrastructureSource(
@@ -187,6 +211,7 @@ def create_source(
         "source",
         source.id,
         {"name": source.name, "provider": source.provider},
+        actor.id,
     )
     _commit(db)
     db.refresh(source)
@@ -223,8 +248,13 @@ def get_source(source_id: uuid.UUID, db: Session = Depends(get_db)) -> Infrastru
     "/sources/{source_id}/scans",
     response_model=ScanOut,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_operator)],
 )
-def request_source_scan(source_id: uuid.UUID, db: Session = Depends(get_db)) -> Scan:
+def request_source_scan(
+    source_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+) -> Scan:
     """Queue a manual scan; the worker runs the provider adapter asynchronously."""
     source = _get_or_404(db, InfrastructureSource, source_id, "Infrastructure source")
     if not source.enabled:
@@ -241,7 +271,7 @@ def request_source_scan(source_id: uuid.UUID, db: Session = Depends(get_db)) -> 
             },
         )
     scan = enqueue_scan(db, source, "manual")
-    _record_audit(db, "scan.queued", "scan", scan.id, {"source_id": str(source.id)})
+    _record_audit(db, "scan.queued", "scan", scan.id, {"source_id": str(source.id)}, actor.id)
     _commit(db)
     db.refresh(scan)
     return scan
@@ -356,9 +386,13 @@ def get_finding(finding_id: uuid.UUID, db: Session = Depends(get_db)) -> Finding
     "/findings/{finding_id}/github-issue",
     response_model=GitHubIssueOut,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_operator)],
 )
 def create_finding_github_issue(
-    finding_id: uuid.UUID, response: Response, db: Session = Depends(get_db)
+    finding_id: uuid.UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
 ) -> GitHubIssueOut:
     """Explicitly publish a finding summary to the configured GitHub repository."""
     finding = db.scalar(
@@ -450,6 +484,7 @@ def create_finding_github_issue(
         "finding",
         finding_id,
         {"repository": issue.repository, "issue_number": issue.number},
+        actor.id,
     )
     _commit(db)
     return GitHubIssueOut(
@@ -461,8 +496,15 @@ def create_finding_github_issue(
     )
 
 
-@router.post("/policies", response_model=PolicyOut, status_code=status.HTTP_201_CREATED)
-def create_policy(payload: PolicyCreate, db: Session = Depends(get_db)) -> Policy:
+@router.post(
+    "/policies",
+    response_model=PolicyOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_operator)],
+)
+def create_policy(
+    payload: PolicyCreate, db: Session = Depends(get_db), actor: User = Depends(get_current_user)
+) -> Policy:
     if payload.project_id is not None:
         _get_or_404(db, Project, payload.project_id, "Project")
     policy = Policy(
@@ -473,7 +515,7 @@ def create_policy(payload: PolicyCreate, db: Session = Depends(get_db)) -> Polic
         enabled=payload.enabled,
     )
     db.add(policy)
-    _record_audit(db, "policy.created", "policy", policy.id, {"name": policy.name})
+    _record_audit(db, "policy.created", "policy", policy.id, {"name": policy.name}, actor.id)
     _commit(db)
     db.refresh(policy)
     return policy
