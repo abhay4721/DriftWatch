@@ -13,6 +13,7 @@ from driftwatch.config import settings
 from driftwatch.database import SessionLocal
 from driftwatch.db_models import DriftFinding as StoredFinding
 from driftwatch.db_models import InfrastructureSource, Resource, ResourceChange, Scan
+from driftwatch.drift.adapters.kubernetes import KubernetesAdapter
 from driftwatch.drift.adapters.opentofu import OpenTofuAdapter, ScanError, validate_source_path
 from driftwatch.drift.engine import DriftEngine
 from driftwatch.drift.models import ScanReport
@@ -72,7 +73,7 @@ def fail_abandoned_scans() -> int:
 
 def run_source_scan(source: InfrastructureSource) -> ScanReport:
     """Run a supported adapter inside the configured source root."""
-    if source.provider != "opentofu":
+    if source.provider not in {"opentofu", "kubernetes"}:
         raise ScanError(
             "unsupported_provider",
             f"The {source.provider} scan adapter is not available yet.",
@@ -82,12 +83,32 @@ def run_source_scan(source: InfrastructureSource) -> ScanReport:
     candidate = configured if configured.is_absolute() else root / configured
     safe_source = validate_source_path(candidate, root)
     policy = DriftPolicy.load()
-    adapter = OpenTofuAdapter(
-        policy,
-        source_root=root,
-        tofu_path=settings.tofu_path,
-        timeout_seconds=settings.scan_timeout_seconds,
-    )
+    if source.provider == "opentofu":
+        adapter = OpenTofuAdapter(
+            policy,
+            source_root=root,
+            tofu_path=settings.tofu_path,
+            timeout_seconds=settings.scan_timeout_seconds,
+        )
+    else:
+        configuration = source.configuration or {}
+        context = configuration.get("context")
+        default_namespace = configuration.get("namespace")
+        if not isinstance(context, str) or not context.strip():
+            raise ScanError(
+                "missing_kubernetes_context",
+                "Configure an explicit Kubernetes context in the source settings.",
+            )
+        if default_namespace is not None and not isinstance(default_namespace, str):
+            raise ScanError("invalid_kubernetes_namespace", "Kubernetes namespace is invalid.")
+        adapter = KubernetesAdapter(
+            policy,
+            source_root=root,
+            context=context,
+            kubectl_path=settings.kubectl_path,
+            timeout_seconds=settings.scan_timeout_seconds,
+            default_namespace=default_namespace,
+        )
     report = DriftEngine(adapter).scan(safe_source)
     report.source = safe_source.relative_to(root).as_posix()
     return report

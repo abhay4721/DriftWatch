@@ -24,7 +24,7 @@ def enqueue_due_scans() -> int:
             select(InfrastructureSource)
             .where(
                 InfrastructureSource.enabled.is_(True),
-                InfrastructureSource.provider == "opentofu",
+                InfrastructureSource.provider.in_(("opentofu", "kubernetes")),
             )
             .order_by(InfrastructureSource.created_at, InfrastructureSource.id)
         ).all()

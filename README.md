@@ -16,7 +16,7 @@ flowchart LR
   Grafana[Grafana] --> Prometheus
 ```
 
-Compose keeps PostgreSQL on a private internal network. The API joins that network and the application network; browser-facing ports bind to localhost. Worker and scheduler are separate processes. The OpenTofu adapter runs only from the backend code path with argument arrays, timeouts, source-root validation, and refresh-only plans. Phase 3 adds PostgreSQL persistence, Alembic migrations, and versioned project, source, policy, inventory, scan-history, finding, and audit APIs. Phase 4 adds a responsive React dashboard that reads those APIs, summarizes recorded data, supports workspace search, and creates projects. Phase 5 connects manual and scheduled scan queues to the worker, which persists scan outcomes, findings, and finding resolutions. Phase 6 allows operators to publish sanitized finding summaries as GitHub issues.
+Compose keeps PostgreSQL on a private internal network. The API joins that network and the application network; browser-facing ports bind to localhost. Worker and scheduler are separate processes. The OpenTofu adapter runs only from the backend code path with argument arrays, timeouts, source-root validation, and refresh-only plans. Phase 3 adds PostgreSQL persistence, Alembic migrations, and versioned project, source, policy, inventory, scan-history, finding, and audit APIs. Phase 4 adds a responsive React dashboard that reads those APIs, summarizes recorded data, supports workspace search, and creates projects. Phase 5 connects manual and scheduled scan queues to the worker, which persists scan outcomes, findings, and finding resolutions. Phase 6 allows operators to publish sanitized finding summaries as GitHub issues. Phase 7 adds an optional read-only Kubernetes manifest adapter.
 
 ## Stack
 
@@ -57,7 +57,7 @@ python -m venv .venv
 
 The demo creates the baseline file with one explicit `tofu apply`, runs a clean scan, edits the file out of band, reports the changed `content` attribute, restores the approved value, and confirms a clean scan. Detection itself runs no `apply`, does not update state, and returns sanitized JSON. Run an individual scan with `python -m driftwatch.scan_cli --source tofu-local` from the repository root. Exit codes are `0` for clean, `2` for drift, and `1` for scan errors. The Phase 2 CLI remains available for direct local scans. The Phase 4 dashboard displays persisted projects, environments, sources, resources, findings, scans, and audit events when available. In Compose, source paths are relative to `demo/`; use `tofu-local` to scan `demo/tofu-local`.
 
-The OpenTofu integration and parser are described in [Drift detection](docs/drift-detection.md). Phase 3 endpoints and migrations are described in [Database and API](docs/api.md).
+The OpenTofu integration and parser are described in [Drift detection](docs/drift-detection.md). Phase 3 endpoints and later integrations are described in [Database and API](docs/api.md). Kubernetes setup is described in [Kubernetes drift scans](docs/kubernetes.md).
 
 ## Repository layout
 
@@ -86,7 +86,7 @@ npm run build
 
 ## Automated verification and diagnostics
 
-Run the Phase 1-6 checks with one command. The script runs backend tests/lint, frontend lint/build when dependencies are installed, validates Compose configuration, and checks service health when the stack is running. It prints a suggested fix for failures and exits nonzero if any check fails.
+Run the Phase 1-7 checks with one command. The script runs backend tests/lint, frontend lint/build when dependencies are installed, validates Compose configuration, and checks service health when the stack is running. It prints a suggested fix for failures and exits nonzero if any check fails.
 
 ```powershell
 .\scripts\verify.ps1
@@ -101,6 +101,7 @@ Select one phase, start the Compose stack as part of verification, or save a JSO
 .\scripts\verify.ps1 -Phase 3
 .\scripts\verify.ps1 -Phase 5
 .\scripts\verify.ps1 -Phase 6
+.\scripts\verify.ps1 -Phase 7
 ```
 
 Run the full Phase 2 clean → drift → clean demo with `-RunDriftDemo`. This initializes and applies the demo's local baseline; each scan verifies that it leaves the OpenTofu state file unchanged.
@@ -116,8 +117,8 @@ Run the full Phase 2 clean → drift → clean demo with `-RunDriftDemo`. This i
 3. Database schema, migrations, and versioned API
 4. React dashboard
 5. Worker and scheduler automation
-6. GitHub integration (current)
-7. Optional Kubernetes adapter
+6. GitHub integration
+7. Optional Kubernetes adapter (current)
 8. Security and production hardening
 
 Each phase will be reviewed before the next begins.

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('All', '1', '2', '3', '4', '5', '6')]
+    [ValidateSet('All', '1', '2', '3', '4', '5', '6', '7')]
     [string]$Phase = 'All',
     [switch]$StartServices,
     [switch]$BuildServices,
@@ -11,6 +11,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$pytestBaseTemp = Join-Path $repoRoot ('.pytest-tmp-' + [guid]::NewGuid().ToString('N'))
 $frontendPath = Join-Path $repoRoot 'frontend'
 $checks = [System.Collections.Generic.List[object]]::new()
 if ($Python -eq 'python' -and (Test-Path -LiteralPath (Join-Path $repoRoot '.venv\Scripts\python.exe'))) {
@@ -86,10 +87,11 @@ $runPhase2 = $Phase -in @('All', '2')
 $runPhase3 = $Phase -in @('All', '3')
 $runPhase5 = $Phase -in @('All', '5')
 $runPhase6 = $Phase -in @('All', '6')
+$runPhase7 = $Phase -in @('All', '7')
 
 if ($runPhase1) {
     Write-Host '--- Phase 1: foundation and runtime ---' -ForegroundColor Cyan
-    Invoke-CommandCheck 'Foundation API tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', '.pytest-tmp', 'backend/tests/test_health.py') $repoRoot 'Review the error details. If dependencies are missing, run python -m pip install -r backend/requirements-dev.txt.'
+    Invoke-CommandCheck 'Foundation API tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', $pytestBaseTemp, 'backend/tests/test_health.py') $repoRoot 'Review the error details. If dependencies are missing, run python -m pip install -r backend/requirements-dev.txt.'
     Invoke-CommandCheck 'Backend lint' $Python @('-m', 'ruff', 'check', 'backend') $repoRoot 'Install dev dependencies and fix Ruff findings.'
 
     $npm = Get-Command 'npm' -ErrorAction SilentlyContinue
@@ -146,7 +148,7 @@ if ($runPhase1) {
 
 if ($runPhase2) {
     Write-Host "`n--- Phase 2: drift engine ---" -ForegroundColor Cyan
-    Invoke-CommandCheck 'Drift engine tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', '.pytest-tmp', 'backend/tests/test_drift_adapter.py', 'backend/tests/test_drift_parser.py') $repoRoot 'Review the error details. If dependencies are missing, run python -m pip install -r backend/requirements-dev.txt.'
+    Invoke-CommandCheck 'Drift engine tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', $pytestBaseTemp, 'backend/tests/test_drift_adapter.py', 'backend/tests/test_drift_parser.py') $repoRoot 'Review the error details. If dependencies are missing, run python -m pip install -r backend/requirements-dev.txt.'
     Invoke-CommandCheck 'Drift engine lint' $Python @('-m', 'ruff', 'check', 'backend/src/driftwatch/drift', 'backend/src/driftwatch/scan_cli.py', 'backend/tests/test_drift_adapter.py', 'backend/tests/test_drift_parser.py') $repoRoot 'Fix the reported Ruff findings.'
     if ($RunDriftDemo) {
         $currentPowerShell = (Get-Process -Id $PID).Path
@@ -158,21 +160,28 @@ if ($runPhase2) {
 
 if ($runPhase3) {
     Write-Host "`n--- Phase 3: database and API ---" -ForegroundColor Cyan
-    Invoke-CommandCheck 'Versioned API tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', '.pytest-tmp', 'backend/tests/test_api_v1.py') $repoRoot 'Review the failure details; install backend requirements if modules are missing.'
+    Invoke-CommandCheck 'Versioned API tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', $pytestBaseTemp, 'backend/tests/test_api_v1.py') $repoRoot 'Review the failure details; install backend requirements if modules are missing.'
     Invoke-CommandCheck 'Phase 3 lint' $Python @('-m', 'ruff', 'check', 'backend/src/driftwatch/database.py', 'backend/src/driftwatch/db_models.py', 'backend/src/driftwatch/schemas.py', 'backend/src/driftwatch/api_v1.py', 'backend/migrations', 'backend/tests/test_api_v1.py') $repoRoot 'Fix the reported lint issues.'
 }
 
 if ($runPhase5) {
     Write-Host "`n--- Phase 5: scan automation ---" -ForegroundColor Cyan
-    Invoke-CommandCheck 'Automation tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', '.pytest-tmp', 'backend/tests/test_automation.py', 'backend/tests/test_api_v1.py') $repoRoot 'Review the failure details; install backend requirements if modules are missing.'
+    Invoke-CommandCheck 'Automation tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', $pytestBaseTemp, 'backend/tests/test_automation.py', 'backend/tests/test_api_v1.py') $repoRoot 'Review the failure details; install backend requirements if modules are missing.'
     Invoke-CommandCheck 'Phase 5 lint' $Python @('-m', 'ruff', 'check', 'backend/src/driftwatch/config.py', 'backend/src/driftwatch/scan_service.py', 'backend/src/driftwatch/worker.py', 'backend/src/driftwatch/scheduler.py', 'backend/src/driftwatch/api_v1.py', 'backend/tests/test_automation.py', 'backend/tests/test_api_v1.py') $repoRoot 'Fix the reported Ruff findings.'
     Invoke-CommandCheck 'Compose configuration' 'docker' @('compose', 'config', '--quiet') $repoRoot 'Check docker-compose.yml and required .env values.'
 }
 
 if ($runPhase6) {
     Write-Host "`n--- Phase 6: GitHub integration ---" -ForegroundColor Cyan
-    Invoke-CommandCheck 'GitHub integration tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', '.pytest-tmp', 'backend/tests/test_github.py', 'backend/tests/test_api_v1.py') $repoRoot 'Review the failure details; install backend requirements if modules are missing.'
+    Invoke-CommandCheck 'GitHub integration tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', $pytestBaseTemp, 'backend/tests/test_github.py', 'backend/tests/test_api_v1.py') $repoRoot 'Review the failure details; install backend requirements if modules are missing.'
     Invoke-CommandCheck 'Phase 6 lint' $Python @('-m', 'ruff', 'check', 'backend/src/driftwatch/config.py', 'backend/src/driftwatch/github.py', 'backend/src/driftwatch/schemas.py', 'backend/src/driftwatch/api_v1.py', 'backend/tests/test_github.py', 'backend/tests/test_api_v1.py') $repoRoot 'Fix the reported Ruff findings.'
+    Invoke-CommandCheck 'Compose configuration' 'docker' @('compose', 'config', '--quiet') $repoRoot 'Check docker-compose.yml and required .env values.'
+}
+
+if ($runPhase7) {
+    Write-Host "`n--- Phase 7: Kubernetes adapter ---" -ForegroundColor Cyan
+    Invoke-CommandCheck 'Kubernetes adapter tests' $Python @('-m', 'pytest', '-p', 'no:cacheprovider', '--basetemp', $pytestBaseTemp, 'backend/tests/test_kubernetes_adapter.py', 'backend/tests/test_automation.py', 'backend/tests/test_api_v1.py') $repoRoot 'Review the failure details; install backend requirements if modules are missing.'
+    Invoke-CommandCheck 'Phase 7 lint' $Python @('-m', 'ruff', 'check', 'backend/src/driftwatch/config.py', 'backend/src/driftwatch/drift/adapters/kubernetes.py', 'backend/src/driftwatch/scan_service.py', 'backend/src/driftwatch/scheduler.py', 'backend/src/driftwatch/api_v1.py', 'backend/tests/test_kubernetes_adapter.py', 'backend/tests/test_automation.py', 'backend/tests/test_api_v1.py') $repoRoot 'Fix the reported Ruff findings.'
     Invoke-CommandCheck 'Compose configuration' 'docker' @('compose', 'config', '--quiet') $repoRoot 'Check docker-compose.yml and required .env values.'
 }
 

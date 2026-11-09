@@ -14,6 +14,7 @@ class Settings(BaseSettings):
         validation_alias="DRIFTWATCH_SOURCE_ROOT",
     )
     tofu_path: str = Field(default="tofu", validation_alias="DRIFTWATCH_TOFU_PATH")
+    kubectl_path: str = Field(default="kubectl", validation_alias="DRIFTWATCH_KUBECTL_PATH")
     scan_timeout_seconds: int = Field(
         default=300, validation_alias="DRIFTWATCH_SCAN_TIMEOUT_SECONDS"
     )

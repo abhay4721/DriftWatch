@@ -232,12 +232,12 @@ def request_source_scan(source_id: uuid.UUID, db: Session = Depends(get_db)) -> 
             status_code=409,
             detail={"code": "source_disabled", "message": "Enable this source before scanning."},
         )
-    if source.provider != "opentofu":
+    if source.provider not in {"opentofu", "kubernetes"}:
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "unsupported_provider",
-                "message": "Only OpenTofu sources can be scanned in this phase.",
+                "message": "This provider does not have a scan adapter available yet.",
             },
         )
     scan = enqueue_scan(db, source, "manual")

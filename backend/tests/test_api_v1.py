@@ -81,8 +81,23 @@ def test_project_environment_source_crud_and_audit() -> None:
         assert scan_response.status_code == 202
         assert scan_response.json()["status"] == "queued"
         assert scan_response.json()["trigger_type"] == "manual"
+        kubernetes_source = client.post(
+            f"/api/v1/environments/{environment['id']}/sources",
+            json={
+                "name": "cluster",
+                "provider": "kubernetes",
+                "path": "kubernetes/staging",
+                "configuration": {"context": "docker-desktop", "namespace": "staging"},
+            },
+        )
+        assert kubernetes_source.status_code == 201
+        kubernetes_scan = client.post(
+            f"/api/v1/sources/{kubernetes_source.json()['id']}/scans"
+        )
+        assert kubernetes_scan.status_code == 202
+        assert kubernetes_scan.json()["status"] == "queued"
         audit = client.get("/api/v1/audit-logs?entity_type=source")
-        assert audit.json()["total"] == 1
+        assert audit.json()["total"] == 2
         assert audit.json()["items"][0]["action"] == "source.created"
 
 
